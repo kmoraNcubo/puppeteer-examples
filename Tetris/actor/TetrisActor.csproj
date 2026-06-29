@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Tetris.Acting</RootNamespace>
+    <AssemblyName>TetrisActor</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\domain\TetrisDomain.csproj" />
+
+    <!--
+      TEMPORARY engine reference. This points at the full Puppeteer Pacifico dev
+      checkout, where Choreography builds strong-name-signed. The public clone
+      (referenced by HelloWorld as ..\..\..\puppeteer\...) currently cannot build
+      Choreography because its signing key is not synced to the public repo.
+
+      Once the pending Pacifico commits are synced to the public clone (and
+      Choreography is de-signed there), this MUST move to the public-clone paths
+      to match the HelloWorld convention:
+          ..\..\..\puppeteer\Puppeteer\Puppeteer.csproj
+          ..\..\..\puppeteer\Choreography\Choreography.csproj
+      The example assemblies stay unsigned; an unsigned assembly may reference a
+      signed one, so this builds today against the signed Pacifico assemblies.
+    -->
+    <ProjectReference Include="..\..\..\Puppeteer Pacifico\Puppeteer\Puppeteer.csproj" />
+    <ProjectReference Include="..\..\..\Puppeteer Pacifico\Choreography\Choreography.csproj" />
+  </ItemGroup>
+
+</Project>

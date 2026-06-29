@@ -1,12 +1,14 @@
 using System.Text;
-using Tetris;
+using Tetris.Acting;
 
-// An interactive, keyboard-driven Tetris you play in the terminal. It references
-// only the domain — no Puppeteer — and drives the clean Well directly. This is
-// the "console monolith": the host supplies everything the domain externalizes —
-// the keyboard (inbound commands), the clock (gravity), the randomness (which
-// piece to Spawn), and the rendering. The domain stays a pure, deterministic
-// function of the operation stream; the messy real-world concerns live out here.
+// An interactive, keyboard-driven Tetris you play in the terminal. It drives a
+// TetrisActor — the typed facade over a Puppeteer Performance — and never
+// touches the Well or any DSL directly. This is the "console monolith": the host
+// supplies everything the domain externalizes — the keyboard (inbound commands),
+// the clock (gravity), and the rendering — while the actor turns each call into
+// a journaled command. The piece-selection randomness lives in the domain
+// (well.NextPieceLetter()); the host just asks the actor to SpawnNext, so the
+// whole game flows through the Performance and the journal records the stream.
 
 const int width = 10;
 const int height = 20;
@@ -21,24 +23,20 @@ var auto = args.Contains("--auto");
 // redraw.
 var interactiveConsole = !Console.IsOutputRedirected;
 
-var well = new Well(width, height);
+// Moves chosen by --auto are deterministic via this seed; the *piece* sequence
+// is the domain's own (transient) randomness, captured into the journal.
+var moveRandom = new Random(12345);
 
-// The host owns randomness. The domain never picks a piece; the host hands one
-// in via Spawn(type). This System.Random is exactly the seam a Puppeteer
-// reaction will later fill — the framework would record (Eval) the draw so a
-// replayed journal reproduces the same game.
-var random = new Random(auto ? 12345 : Environment.TickCount);
-var pieceTypes = Enum.GetValues<PieceType>();
-PieceType NextPiece() => pieceTypes[random.Next(pieceTypes.Length)];
+using var game = new TetrisActor("console", width, height);
 
-// Query-first contract, by construction: the host inspects the well's queries
-// (IsGameOver / IsAwaitingPiece / Active) before issuing any operation, so it
-// never relies on catching TetrisRuleException.
-void SpawnIfAwaiting()
+// Query-first contract, by construction: the host inspects the snapshot's
+// queries (IsGameOver / IsAwaitingPiece) before issuing any operation, so it
+// never relies on catching the domain's rule exception.
+void SpawnIfAwaiting(WellSnapshot snapshot)
 {
-    if (well.IsAwaitingPiece)
+    if (snapshot.IsAwaitingPiece)
     {
-        well.Spawn(NextPiece());
+        game.SpawnNext(); // the actor asks the domain for the next piece
     }
 }
 
@@ -54,13 +52,15 @@ try
         Console.Clear();
     }
 
-    SpawnIfAwaiting(); // the host supplies the first piece
-    Render(well);
+    var snapshot = game.Snapshot();
+    SpawnIfAwaiting(snapshot);            // supply the first piece
+    snapshot = game.Snapshot();
+    Render(snapshot);
 
     var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8); // only used by --auto
     var nextGravity = DateTime.UtcNow + gravityInterval;
 
-    while (!well.IsGameOver)
+    while (!snapshot.IsGameOver)
     {
         var changed = false;
 
@@ -71,7 +71,7 @@ try
                 break;
             }
 
-            changed |= ApplyAutoMove();
+            changed |= ApplyAutoMove(snapshot);
             Thread.Sleep(40);
         }
         else if (Console.KeyAvailable)
@@ -82,15 +82,25 @@ try
                 break;
             }
 
-            changed |= ApplyKey(key);
+            changed |= ApplyKey(key, snapshot);
         }
 
-        // The clock: on each gravity tick the host asks the domain to advance.
+        // Re-read after the input phase: a move/drop may have landed the piece,
+        // leaving the well between pieces. Every later decision is query-first
+        // against this FRESH snapshot, so we never Tick a pieceless well.
+        if (changed)
+        {
+            snapshot = game.Snapshot();
+        }
+
+        // The clock: on each gravity tick the host asks the actor to advance —
+        // only while a piece is actually falling (query-first on the fresh state).
         if (DateTime.UtcNow >= nextGravity)
         {
-            if (well.Active is not null)
+            if (!snapshot.IsAwaitingPiece && !snapshot.IsGameOver)
             {
-                well.Tick();
+                game.Tick();
+                snapshot = game.Snapshot();
                 changed = true;
             }
 
@@ -98,15 +108,16 @@ try
         }
 
         // A landing leaves the well between pieces; the host feeds the next one.
-        if (well.IsAwaitingPiece)
+        if (snapshot.IsAwaitingPiece)
         {
-            SpawnIfAwaiting();
+            SpawnIfAwaiting(snapshot);
+            snapshot = game.Snapshot();
             changed = true;
         }
 
         if (changed)
         {
-            Render(well);
+            Render(snapshot);
         }
 
         if (!auto)
@@ -115,7 +126,7 @@ try
         }
     }
 
-    Render(well); // final frame (GAME OVER banner if the pile reached the top)
+    Render(game.Snapshot()); // final frame (GAME OVER banner if the pile reached the top)
 }
 finally
 {
@@ -129,67 +140,67 @@ finally
 // --- input -----------------------------------------------------------------
 
 // Every verb is guarded by a query first — the host only moves when a piece is
-// active, so TetrisRuleException is never used for control flow.
-bool ApplyKey(ConsoleKey key)
+// active, so the domain's rule exception is never used for control flow.
+bool ApplyKey(ConsoleKey key, WellSnapshot snapshot)
 {
-    if (well.Active is null)
+    if (snapshot.IsAwaitingPiece || snapshot.IsGameOver)
     {
         return false;
     }
 
     switch (key)
     {
-        case ConsoleKey.LeftArrow: well.MoveLeft(); return true;
-        case ConsoleKey.RightArrow: well.MoveRight(); return true;
-        case ConsoleKey.UpArrow: well.Rotate(); return true;
-        case ConsoleKey.DownArrow: well.Tick(); return true;   // soft drop
-        case ConsoleKey.Spacebar: well.Drop(); return true;    // hard drop
+        case ConsoleKey.LeftArrow: game.MoveLeft(); return true;
+        case ConsoleKey.RightArrow: game.MoveRight(); return true;
+        case ConsoleKey.UpArrow: game.Rotate(); return true;
+        case ConsoleKey.DownArrow: game.Tick(); return true;   // soft drop
+        case ConsoleKey.Spacebar: game.Drop(); return true;    // hard drop
         default: return false;
     }
 }
 
-bool ApplyAutoMove()
+bool ApplyAutoMove(WellSnapshot snapshot)
 {
-    if (well.Active is null)
+    if (snapshot.IsAwaitingPiece || snapshot.IsGameOver)
     {
         return false;
     }
 
-    switch (random.Next(5))
+    switch (moveRandom.Next(5))
     {
-        case 0: well.MoveLeft(); return true;
-        case 1: well.MoveRight(); return true;
-        case 2: well.Rotate(); return true;
-        case 3: well.Tick(); return true;
-        default: well.Drop(); return true;
+        case 0: game.MoveLeft(); return true;
+        case 1: game.MoveRight(); return true;
+        case 2: game.Rotate(); return true;
+        case 3: game.Tick(); return true;
+        default: game.Drop(); return true;
     }
 }
 
 // --- rendering -------------------------------------------------------------
 
-void Render(Well well)
+void Render(WellSnapshot snapshot)
 {
-    var occupied = well.OccupiedInterior();
+    var occupied = new HashSet<Cell>(snapshot.Occupied);
 
     var sb = new StringBuilder();
     sb.AppendLine("TETRIS — ←/→ move   ↑ rotate   ↓ soft drop   Space hard drop   Q/Esc quit");
-    sb.AppendLine($"Lines cleared: {well.ClearedLines}");
+    sb.AppendLine($"Lines cleared: {snapshot.ClearedLines}");
     sb.AppendLine();
 
-    for (var row = 0; row < well.Frame.Height; row++)
+    for (var row = 0; row < snapshot.Height; row++)
     {
         sb.Append('|'); // left wall
-        for (var column = 0; column < well.Frame.Width; column++)
+        for (var column = 0; column < snapshot.Width; column++)
         {
-            sb.Append(occupied.Contains(new Position(row, column)) ? "[]" : "  ");
+            sb.Append(occupied.Contains(new Cell(row, column)) ? "[]" : "  ");
         }
 
         sb.AppendLine("|"); // right wall
     }
 
-    sb.Append('+').Append(new string('=', well.Frame.Width * 2)).AppendLine("+"); // floor
+    sb.Append('+').Append(new string('=', snapshot.Width * 2)).AppendLine("+"); // floor
 
-    if (well.IsGameOver)
+    if (snapshot.IsGameOver)
     {
         sb.AppendLine();
         sb.AppendLine("            G A M E   O V E R");

@@ -129,6 +129,25 @@ internal sealed class Well
         AssertInvariants();
     }
 
+    // The piece-selection policy: a uniform random pick over the seven types.
+    // The randomness is TRANSIENT — a process-wide source that is never part of
+    // the well's state and so is never persisted or replayed. A caller resolves
+    // the next letter once (the resolved letter is what gets recorded), then
+    // feeds it back in as a deterministic Spawn; replay re-applies that exact
+    // Spawn and never re-rolls. So this method must stay a pure query: it picks
+    // a letter and mutates nothing.
+    private static readonly System.Random Chooser = new();
+    private static readonly string[] Letters = ["I", "O", "T", "S", "Z", "J", "L"];
+
+    /// <summary>
+    /// Picks the next piece at random and returns its letter (one of
+    /// "I", "O", "T", "S", "Z", "J", "L") — the piece-selection policy, as a
+    /// query. It does not place anything; a caller resolves the letter and then
+    /// spawns it. The letter names a <see cref="PieceType"/> member, so a host
+    /// can coerce it back to the enum.
+    /// </summary>
+    internal string NextPieceLetter() => Letters[Chooser.Next(Letters.Length)];
+
     /// <summary>
     /// The single legality rule. A candidate placement is legal iff its cells
     /// overlap neither the boundary nor the pile. Because the frame is itself a

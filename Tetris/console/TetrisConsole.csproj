@@ -10,7 +10,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\domain\TetrisDomain.csproj" />
+    <!-- The console drives the TetrisActor only — no direct Well, no DSL. The
+         actor transitively brings the domain and the engine. -->
+    <ProjectReference Include="..\actor\TetrisActor.csproj" />
   </ItemGroup>
 
 </Project>

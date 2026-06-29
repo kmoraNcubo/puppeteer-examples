@@ -376,4 +376,22 @@ public sealed class WellTests
         Assert.ThrowsException<System.ArgumentOutOfRangeException>(() => new Well(3, 10));
         Assert.ThrowsException<System.ArgumentOutOfRangeException>(() => new Well(4, 1));
     }
+
+    [TestMethod]
+    public void NextPieceLetter_AlwaysReturnsAValidPieceLetter_ThatNamesAPieceType()
+    {
+        var well = new Well(10, 20);
+
+        // Sample many draws; every one must be a letter that names a PieceType,
+        // and the picker must not place anything (it is a pure query).
+        for (var i = 0; i < 200; i++)
+        {
+            var letter = well.NextPieceLetter();
+            Assert.IsTrue(
+                System.Enum.TryParse<PieceType>(letter, out _),
+                $"'{letter}' should name a PieceType");
+            Assert.IsTrue(well.IsAwaitingPiece, "the picker must not place a piece");
+            Assert.IsNull(well.Active);
+        }
+    }
 }
