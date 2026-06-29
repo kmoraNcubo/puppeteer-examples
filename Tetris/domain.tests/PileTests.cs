@@ -1,131 +1,81 @@
-using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Tetris.Tests;
 
 /// <summary>
-/// The accumulated floor: integrating a landed piece, detecting complete rows,
-/// and the bottom-up collapse that pulls surviving blocks downward.
+/// The accumulated floor. The pile owns the whole landing transition:
+/// <see cref="Pile.Integrate"/> absorbs a piece and, in the same call, collapses
+/// any rows it completed (bottom-up), reporting which rows collapsed. These
+/// tests drive that one operation with explicitly placed pieces.
 /// </summary>
 [TestClass]
 public sealed class PileTests
 {
-    /// <summary>Builds a pile from explicit (row, column) cells via a tiny one-row shape.</summary>
-    private static Pile PileWith(int width, params (int Row, int Column)[] cells)
+    /// <summary>A tetromino of <paramref name="type"/> with its bounding box anchored at (row, col).</summary>
+    private static Piece Place(PieceType type, int row, int column) =>
+        Tetromino.Spawn(type, new Position(row, column));
+
+    [TestMethod]
+    public void Integrate_WithoutCompletingARow_AddsTheCellsAndReportsNoCollapse()
     {
-        var pile = Pile.Empty(width);
-        foreach (var (row, column) in cells)
+        // Width 4. A single O at rows 2..3, cols 0..1 completes nothing.
+        var (pile, collapsed) = Pile.Empty(4).Integrate(Place(PieceType.O, 2, 0));
+
+        Assert.AreEqual(0, collapsed.Count, "no rows collapsed");
+        foreach (var cell in Place(PieceType.O, 2, 0).Cells)
         {
-            pile = pile.Integrate(new SingleCell(row, column));
+            Assert.IsTrue(pile.Occupies(cell), $"pile should contain {cell}");
         }
-
-        return pile;
-    }
-
-    /// <summary>A one-cell shape, only for assembling test piles.</summary>
-    private sealed class SingleCell : Shape
-    {
-        public SingleCell(int row, int column) =>
-            Cells = ImmutableHashSet.Create(new Position(row, column));
-
-        public override ImmutableHashSet<Position> Cells { get; }
+        Assert.IsFalse(pile.HasCompleteRow());
     }
 
     [TestMethod]
-    public void Integrate_AddsAPiecesCellsToThePile()
+    public void Integrate_CompletingTheFloorRow_CollapsesItAndReportsTheIndex()
     {
-        var piece = Tetromino.Spawn(PieceType.O, new Position(2, 1));
-        var pile = Pile.Empty(4).Integrate(piece);
+        // Width 4. A horizontal I at row 1 (cells row 1, cols 0..3) fills the
+        // whole width of that row, so integrating it completes and clears row 1.
+        var iBar = Place(PieceType.I, 0, 0); // I pose 0: cells (1,0)(1,1)(1,2)(1,3)
+        var (pile, collapsed) = Pile.Empty(4).Integrate(iBar);
 
-        Assert.IsTrue(pile.Cells.SetEquals(piece.Cells));
-        foreach (var cell in piece.Cells)
-        {
-            Assert.IsTrue(pile.Occupies(cell));
-        }
+        CollectionAssert.AreEqual(new[] { 1 }, collapsed.ToArray(), "row 1 collapsed");
+        Assert.AreEqual(0, pile.Cells.Count, "the completed row left an empty pile");
+        Assert.IsFalse(pile.HasCompleteRow());
     }
 
     [TestMethod]
-    public void CompleteRows_FindsFullyFilledRowsOnly()
+    public void Integrate_CompletingTwoRowsAtOnce_ReportsBoth_AndDropsTheSurvivorBottomUp()
     {
-        // Width 3. Row 5 full; row 4 missing one column.
-        var pile = PileWith(3,
-            (5, 0), (5, 1), (5, 2),
-            (4, 0), (4, 1));
+        // Width 4. Build a survivor above two rows that will complete together.
+        //   O #1 -> rows 4..5, cols 0..1     (no completion)
+        //   O #2 stacked -> rows 2..3, cols 0..1  (the survivor block)
+        //   O #3 -> rows 4..5, cols 2..3     completes rows 4 and 5
+        var pile = Pile.Empty(4);
+        (pile, _) = pile.Integrate(Place(PieceType.O, 4, 0)); // rows 4..5, cols 0..1
+        (pile, _) = pile.Integrate(Place(PieceType.O, 2, 0)); // rows 2..3, cols 0..1
+        var (settled, collapsed) = pile.Integrate(Place(PieceType.O, 4, 2)); // rows 4..5, cols 2..3
 
-        var complete = pile.CompleteRows();
-        Assert.AreEqual(1, complete.Count);
-        Assert.IsTrue(complete.Contains(5));
-        Assert.IsFalse(complete.Contains(4));
+        CollectionAssert.AreEqual(new[] { 4, 5 }, collapsed.ToArray(), "rows 4 and 5 collapsed");
+        Assert.IsFalse(settled.HasCompleteRow());
+        Assert.AreEqual(4, settled.Cells.Count, "only the 2x2 survivor remains");
+
+        // The survivor (was rows 2..3, cols 0..1) had two cleared rows below it,
+        // so it drops by two -> rows 4..5.
+        Assert.IsTrue(settled.Occupies(new Position(4, 0)));
+        Assert.IsTrue(settled.Occupies(new Position(4, 1)));
+        Assert.IsTrue(settled.Occupies(new Position(5, 0)));
+        Assert.IsTrue(settled.Occupies(new Position(5, 1)));
     }
 
     [TestMethod]
-    public void ClearCompleteRows_RemovesTheRow_AndDropsBlocksAbove_ByOne()
+    public void Integrate_NeverLeavesACompleteRow()
     {
-        // Width 2. Bottom row 5 is full; a single block sits above it at row 4.
-        var pile = PileWith(2,
-            (5, 0), (5, 1),
-            (4, 0));
+        // Whatever is integrated, the returned pile holds no complete row.
+        var pile = Pile.Empty(4);
+        (pile, _) = pile.Integrate(Place(PieceType.I, 0, 0)); // completes + clears row 1
+        (pile, _) = pile.Integrate(Place(PieceType.O, 4, 0));
+        (pile, _) = pile.Integrate(Place(PieceType.O, 4, 2)); // completes + clears rows 4,5
 
-        var cleared = pile.ClearCompleteRows();
-
-        // The full row is gone; the lone block above ends one row lower (4 -> 5).
-        Assert.IsTrue(cleared.CompleteRows().IsEmpty, "no complete row remains");
-        Assert.IsTrue(cleared.Occupies(new Position(5, 0)), "block above fell one row");
-        Assert.IsFalse(cleared.Occupies(new Position(4, 0)), "old position is empty");
-        Assert.AreEqual(1, cleared.Cells.Count);
-    }
-
-    [TestMethod]
-    public void ClearCompleteRows_ClearsMultipleSimultaneousRows()
-    {
-        // Width 2. Rows 4 and 5 both full; a block at row 3 sits above both.
-        var pile = PileWith(2,
-            (5, 0), (5, 1),
-            (4, 0), (4, 1),
-            (3, 1));
-
-        var cleared = pile.ClearCompleteRows();
-
-        // Two rows vanished, so the surviving block drops by two (3 -> 5).
-        Assert.IsTrue(cleared.CompleteRows().IsEmpty);
-        Assert.AreEqual(1, cleared.Cells.Count);
-        Assert.IsTrue(cleared.Occupies(new Position(5, 1)), "block above fell two rows");
-    }
-
-    [TestMethod]
-    public void ClearCompleteRows_IsBottomUp_BlockAboveAClearedLineDropsByCountBelowIt()
-    {
-        // Width 2. A non-adjacent clear: row 5 (bottom) full, row 4 NOT full,
-        // row 3 full, and a survivor at row 2.
-        //   row 2: (2,1)        survivor
-        //   row 3: full         cleared
-        //   row 4: (4,0)        survivor (one cleared row below it -> drops 1)
-        //   row 5: full         cleared
-        var pile = PileWith(2,
-            (2, 1),
-            (3, 0), (3, 1),
-            (4, 0),
-            (5, 0), (5, 1));
-
-        var cleared = pile.ClearCompleteRows();
-
-        Assert.IsTrue(cleared.CompleteRows().IsEmpty);
-        Assert.AreEqual(2, cleared.Cells.Count);
-
-        // Survivor at row 4 had exactly one cleared row below it (row 5): 4 -> 5.
-        Assert.IsTrue(cleared.Occupies(new Position(5, 0)), "row-4 survivor drops by one");
-
-        // Survivor at row 2 had two cleared rows below it (rows 3 and 5): 2 -> 4.
-        Assert.IsTrue(cleared.Occupies(new Position(4, 1)), "row-2 survivor drops by two");
-    }
-
-    [TestMethod]
-    public void ClearCompleteRows_OnAPileWithoutFullRows_IsANoOp()
-    {
-        var pile = PileWith(3, (5, 0), (5, 1));
-        var cleared = pile.ClearCompleteRows();
-
-        Assert.IsTrue(cleared.Cells.SetEquals(pile.Cells));
+        Assert.IsFalse(pile.HasCompleteRow());
     }
 }

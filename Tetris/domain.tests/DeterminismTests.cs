@@ -7,44 +7,52 @@ namespace Tetris.Tests;
 
 /// <summary>
 /// The property the whole model is shaped around: a well is a pure function of
-/// its initial size, its piece sequence, and the sequence of verbs applied to
-/// it. Replaying the same inputs yields a byte-for-byte identical state — there
-/// is no hidden randomness anywhere once the piece sequence is supplied.
+/// its construction and the sequence of operations applied to it. Because the
+/// next piece is supplied from outside (an explicit <see cref="Well.Spawn"/>),
+/// a command stream fully determines the outcome — replaying it yields a
+/// byte-for-byte identical state, with no hidden randomness anywhere.
 /// </summary>
 [TestClass]
 public sealed class DeterminismTests
 {
-    /// <summary>The fixed move script applied to each replay.</summary>
-    private enum Move { Left, Right, Rotate, Tick, Drop }
+    /// <summary>One command in the replayable stream — either a move or a spawn.</summary>
+    private sealed record Command(string Verb, PieceType Type = default)
+    {
+        public static Command Left { get; } = new("left");
+        public static Command Right { get; } = new("right");
+        public static Command Rotate { get; } = new("rotate");
+        public static Command Tick { get; } = new("tick");
+        public static Command Drop { get; } = new("drop");
+        public static Command Spawn(PieceType type) => new("spawn", type);
+    }
 
-    private static readonly PieceType[] Sequence =
+    // A self-consistent stream: each piece is spawned, manoeuvred, and dropped
+    // before the next is spawned — the host's job of feeding pieces, made
+    // explicit and deterministic.
+    private static readonly Command[] Stream =
     [
-        PieceType.T, PieceType.I, PieceType.O, PieceType.S,
-        PieceType.Z, PieceType.J, PieceType.L, PieceType.T,
-        PieceType.O, PieceType.I, PieceType.S, PieceType.Z,
-        PieceType.J, PieceType.L, PieceType.O, PieceType.T,
-    ];
-
-    private static readonly Move[] Script =
-    [
-        Move.Left, Move.Rotate, Move.Tick, Move.Right, Move.Drop,
-        Move.Rotate, Move.Rotate, Move.Left, Move.Drop, Move.Tick,
-        Move.Right, Move.Drop, Move.Left, Move.Left, Move.Drop,
-        Move.Rotate, Move.Drop, Move.Tick, Move.Tick, Move.Drop,
+        Command.Spawn(PieceType.T), Command.Left, Command.Rotate, Command.Drop,
+        Command.Spawn(PieceType.I), Command.Rotate, Command.Right, Command.Drop,
+        Command.Spawn(PieceType.O), Command.Left, Command.Left, Command.Drop,
+        Command.Spawn(PieceType.S), Command.Tick, Command.Right, Command.Drop,
+        Command.Spawn(PieceType.Z), Command.Rotate, Command.Drop,
+        Command.Spawn(PieceType.J), Command.Left, Command.Drop,
+        Command.Spawn(PieceType.L), Command.Right, Command.Right, Command.Drop,
     ];
 
     private static Well Replay()
     {
-        var well = new Well(8, 16, new ScriptedPieceSource(Sequence));
-        foreach (var move in Script)
+        var well = new Well(8, 16);
+        foreach (var command in Stream)
         {
-            switch (move)
+            switch (command.Verb)
             {
-                case Move.Left: well.MoveLeft(); break;
-                case Move.Right: well.MoveRight(); break;
-                case Move.Rotate: well.Rotate(); break;
-                case Move.Tick: well.Tick(); break;
-                case Move.Drop: well.Drop(); break;
+                case "left": well.MoveLeft(); break;
+                case "right": well.MoveRight(); break;
+                case "rotate": well.Rotate(); break;
+                case "tick": well.Tick(); break;
+                case "drop": well.Drop(); break;
+                case "spawn": well.Spawn(command.Type); break;
             }
         }
 
@@ -65,16 +73,16 @@ public sealed class DeterminismTests
             ? "none"
             : $"{well.Active.Type}:{well.Active.Orientation.Index}:{well.Active.Anchor.Row},{well.Active.Anchor.Column}";
 
-        return $"over={well.IsGameOver};cleared={well.ClearedLines};active={active};cells={cells}";
+        return $"over={well.IsGameOver};awaiting={well.IsAwaitingPiece};cleared={well.ClearedLines};active={active};cells={cells}";
     }
 
     [TestMethod]
-    public void SameInputsAndPieceSequence_YieldIdenticalState()
+    public void SameCommandStream_YieldsIdenticalState()
     {
         var first = Fingerprint(Replay());
         var second = Fingerprint(Replay());
 
-        Assert.AreEqual(first, second, "two replays of the same inputs must match exactly");
+        Assert.AreEqual(first, second, "two replays of the same stream must match exactly");
     }
 
     [TestMethod]

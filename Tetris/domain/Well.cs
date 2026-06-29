@@ -8,20 +8,27 @@ namespace Tetris;
 /// well composes three figures: the boundary <see cref="Frame"/>, the
 /// accumulated <see cref="Pile"/>, and the falling active <see cref="Piece"/>.
 /// <para>
-/// The well is deterministic: the same construction, fed the same piece
-/// sequence and driven by the same sequence of verbs, always reaches the same
-/// state. Every value object it holds is immutable, and a state transition
-/// replaces a reference rather than mutating in place; the only choice the well
-/// makes is which piece comes next, and that is delegated to an
-/// <see cref="IPieceSource"/> so it can be made either random or exactly
-/// reproducible from the outside.
+/// The well does not decide which piece comes next — it is <em>told</em>.
+/// Spawning is an inbound operation (<see cref="Spawn"/>): the caller chooses
+/// the piece type (at random, from a script, or however it likes) and hands it
+/// in. This keeps the well a pure, deterministic function of its construction
+/// and the sequence of operations applied to it; every value object it holds is
+/// immutable, and a transition replaces a reference rather than mutating.
 /// </para>
 /// <para>
-/// Contract for the move verbs: operating on a finished game is invalid and
-/// throws <see cref="GameOverException"/> — a caller is expected to check
-/// <see cref="IsGameOver"/> first. A move that is merely <em>blocked</em> (it
-/// would collide with a wall or the pile) is a valid no-op: the piece stays put
-/// and nothing is thrown.
+/// A well is in one of three states: a piece is <em>falling</em>
+/// (<see cref="Active"/> is non-null), <em>between pieces</em>
+/// (<see cref="IsAwaitingPiece"/> — settled, waiting for the next
+/// <see cref="Spawn"/>), or <em>over</em> (<see cref="IsGameOver"/>). So a null
+/// active piece does not by itself mean game over.
+/// </para>
+/// <para>
+/// Query-first contract. The operations are valid only in the right state and
+/// otherwise throw <see cref="TetrisRuleException"/>: <see cref="Spawn"/> only
+/// when awaiting a piece; the move verbs only when a piece is active. A caller
+/// checks the queries first. A move that is merely <em>blocked</em> (it would
+/// collide with a wall or the pile) is different: it is a valid no-op — the
+/// piece stays put and nothing is thrown.
 /// </para>
 /// </summary>
 internal sealed class Well
@@ -32,28 +39,18 @@ internal sealed class Well
     /// <summary>The accumulated landed blocks.</summary>
     internal Pile Pile { get; private set; }
 
-    /// <summary>The tetromino currently falling, or <c>null</c> once the game is over.</summary>
+    /// <summary>The tetromino currently falling, or <c>null</c> between pieces / once over.</summary>
     internal Piece? Active { get; private set; }
 
     /// <summary>How many rows have been cleared over the well's lifetime.</summary>
     internal int ClearedLines { get; private set; }
 
-    private readonly IPieceSource _pieces;
-
     /// <summary>
-    /// Opens a well of the given interior size whose pieces are drawn at random.
-    /// This is the natural way to start an actual game.
+    /// Opens an empty well of the given interior size — no active piece, no pile,
+    /// awaiting its first <see cref="Spawn"/>. Choosing and supplying pieces is
+    /// the caller's job.
     /// </summary>
-    internal Well(int width, int height) : this(width, height, new RandomPieceSource())
-    {
-    }
-
-    /// <summary>
-    /// Opens a well of the given interior size, drawing its pieces from
-    /// <paramref name="pieces"/>. Supplying a source makes the game
-    /// reproducible.
-    /// </summary>
-    internal Well(int width, int height, IPieceSource pieces)
+    internal Well(int width, int height)
     {
         if (width < 4)
         {
@@ -69,12 +66,6 @@ internal sealed class Well
 
         Frame = new Frame(width, height);
         Pile = Pile.Empty(width);
-        _pieces = pieces;
-
-        if (!IsGameOver)
-        {
-            Spawn();
-        }
 
         AssertInvariants();
     }
@@ -82,10 +73,16 @@ internal sealed class Well
     /// <summary>
     /// Whether the game has ended — <em>derived</em>, not stored. The game is
     /// over exactly when the pile has risen into the <see cref="SpawnRegion"/>,
-    /// so a freshly drawn piece would have nowhere clear to appear. The small
-    /// spawn region iterates and probes the pile's O(1) membership.
+    /// so a freshly spawned piece would have nowhere clear to appear.
     /// </summary>
     internal bool IsGameOver => SpawnRegion.Intersects(Pile);
+
+    /// <summary>
+    /// Whether the well is between pieces: settled and ready for the next
+    /// <see cref="Spawn"/>. True exactly when there is no active piece and the
+    /// game is not over.
+    /// </summary>
+    internal bool IsAwaitingPiece => Active is null && !IsGameOver;
 
     /// <summary>The top-left corner of the 4-wide spawn bounding box.</summary>
     private Position SpawnAnchor => new(0, (Frame.Width - 4) / 2);
@@ -110,6 +107,29 @@ internal sealed class Well
     }
 
     /// <summary>
+    /// Places a piece of the given <paramref name="type"/> at the spawn anchor.
+    /// Valid only when <see cref="IsAwaitingPiece"/>; spawning while a piece is
+    /// already falling, or when the game is over, throws. (When the well is
+    /// awaiting a piece the spawn region is clear by the definition of
+    /// <see cref="IsGameOver"/>, so the placed piece always fits.)
+    /// </summary>
+    internal void Spawn(PieceType type)
+    {
+        if (Active is not null)
+        {
+            throw new TetrisRuleException("Cannot spawn: a piece is already falling.");
+        }
+
+        if (IsGameOver)
+        {
+            throw new TetrisRuleException("Cannot spawn: the game is over.");
+        }
+
+        Active = Tetromino.Spawn(type, SpawnAnchor);
+        AssertInvariants();
+    }
+
+    /// <summary>
     /// The single legality rule. A candidate placement is legal iff its cells
     /// overlap neither the boundary nor the pile. Because the frame is itself a
     /// figure, wall-, floor- and pile-collision are this one
@@ -129,11 +149,11 @@ internal sealed class Well
     /// <summary>
     /// Rotates the active piece one quarter-turn in the single rotation sense. A
     /// rotation that would collide with a wall or the pile is rejected as a
-    /// no-op (no wall-kicks; see the README). Throws if the game is over.
+    /// no-op (no wall-kicks; see the README). Throws if no piece is active.
     /// </summary>
     internal void Rotate()
     {
-        RequireInPlay();
+        RequireActivePiece();
 
         var candidate = Active!.Rotate();
         if (!Collides(candidate))
@@ -146,11 +166,12 @@ internal sealed class Well
 
     /// <summary>
     /// Advances the world by one step. If the active piece can descend a row it
-    /// does; otherwise it <em>lands</em>. Throws if the game is over.
+    /// does; otherwise it <em>lands</em>, leaving the well between pieces. Throws
+    /// if no piece is active.
     /// </summary>
     internal void Tick()
     {
-        RequireInPlay();
+        RequireActivePiece();
 
         var descended = Active!.Translate(Offset.Down);
         if (!Collides(descended))
@@ -165,11 +186,11 @@ internal sealed class Well
 
     /// <summary>
     /// Drops the active piece straight down until it rests, then lands it — the
-    /// hard drop. Throws if the game is over.
+    /// hard drop. Throws if no piece is active.
     /// </summary>
     internal void Drop()
     {
-        RequireInPlay();
+        RequireActivePiece();
 
         var resting = Active!;
         while (!Collides(resting.Translate(Offset.Down)))
@@ -183,7 +204,7 @@ internal sealed class Well
 
     private void Shift(Offset offset)
     {
-        RequireInPlay();
+        RequireActivePiece();
 
         var candidate = Active!.Translate(offset);
         if (!Collides(candidate))
@@ -194,53 +215,31 @@ internal sealed class Well
         AssertInvariants();
     }
 
-    /// <summary>Guards the move verbs: a finished game cannot be operated on.</summary>
-    private void RequireInPlay()
+    /// <summary>Guards the move verbs: there must be a piece to move.</summary>
+    private void RequireActivePiece()
     {
-        if (IsGameOver)
+        if (Active is null)
         {
-            throw new GameOverException(
-                "The game is over; check IsGameOver before operating on the well.");
+            throw new TetrisRuleException(
+                "No active piece; check Active / IsAwaitingPiece / IsGameOver before moving.");
         }
-    }
-
-    private void Land()
-    {
-        // The active piece is, by the caller's guarantee, resting in free space.
-        Pile = Pile.Integrate(Active!);
-
-        var cleared = Pile.CompleteRows().Count;
-        if (cleared > 0)
-        {
-            Pile = Pile.ClearCompleteRows();
-            ClearedLines += cleared;
-        }
-
-        // The piece has settled. Validate before bringing in the next one: if
-        // the pile now reaches the spawn region the game is over and we simply
-        // do not spawn — Active stays null and IsGameOver (derived) stays true.
-        Active = null;
-        if (!IsGameOver)
-        {
-            Spawn();
-        }
-
-        AssertInvariants();
     }
 
     /// <summary>
-    /// Places the next piece at the spawn anchor. Precondition: the game is not
-    /// over (the spawn region is clear). Calling this on a finished game is an
-    /// internal bug, distinct from the caller-facing <see cref="GameOverException"/>.
+    /// Settles the active piece into the pile and leaves the well between pieces.
+    /// The pile owns the whole transition — it absorbs the piece and collapses
+    /// any completed rows — so landing here is just: hand the piece over, count
+    /// what collapsed, and clear the active slot. It does <em>not</em> spawn the
+    /// next piece; the caller does that with <see cref="Spawn"/> once it sees
+    /// <see cref="IsAwaitingPiece"/>.
     /// </summary>
-    private void Spawn()
+    private void Land()
     {
-        if (IsGameOver)
-        {
-            throw new WellInvariantException("Spawn was called on a finished game.");
-        }
+        (Pile, var collapsed) = Pile.Integrate(Active!);
+        ClearedLines += collapsed.Count;
+        Active = null;
 
-        Active = Tetromino.Spawn(_pieces.Next(), SpawnAnchor);
+        AssertInvariants();
     }
 
     /// <summary>
@@ -251,17 +250,17 @@ internal sealed class Well
     /// </summary>
     private void AssertInvariants()
     {
-        // There is an active falling piece exactly when the game is not over.
-        if ((Active is null) != IsGameOver)
+        // Game over implies there is no active piece. (The converse need not
+        // hold: a null active piece may simply mean the well is between pieces.)
+        if (IsGameOver && Active is not null)
         {
-            throw new WellInvariantException(
-                "A well has an active piece if and only if the game is not over.");
+            throw new TetrisRuleException("The game is over but a piece is still active.");
         }
 
         // The pile never retains a complete row.
-        if (!Pile.CompleteRows().IsEmpty)
+        if (Pile.HasCompleteRow())
         {
-            throw new WellInvariantException("The pile retained a complete row.");
+            throw new TetrisRuleException("The pile retained a complete row.");
         }
 
         // Every landed cell lies inside the frame (interior columns, above floor).
@@ -269,7 +268,7 @@ internal sealed class Well
         {
             if (!Frame.Contains(cell))
             {
-                throw new WellInvariantException($"Pile cell {cell} lies outside the frame.");
+                throw new TetrisRuleException($"Pile cell {cell} lies outside the frame.");
             }
         }
 
@@ -282,7 +281,7 @@ internal sealed class Well
         // boundary nor the pile.
         if (Collides(Active))
         {
-            throw new WellInvariantException($"The active piece {Active} intersects an occupied figure.");
+            throw new TetrisRuleException($"The active piece {Active} intersects an occupied figure.");
         }
 
         // Every active cell lies within the interior column range. (Active
@@ -291,7 +290,7 @@ internal sealed class Well
         {
             if (cell.Column < 0 || cell.Column >= Frame.Width || cell.Row >= Frame.Height)
             {
-                throw new WellInvariantException($"Active cell {cell} lies outside the frame.");
+                throw new TetrisRuleException($"Active cell {cell} lies outside the frame.");
             }
         }
     }

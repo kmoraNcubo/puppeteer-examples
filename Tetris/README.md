@@ -145,11 +145,22 @@ the piece only offers candidates.
 ## The pile mutates bottom-up
 
 [`Pile`](domain/Pile.cs) is the accumulated landed blocks — *the floor that does
-not move but mutates*. It is immutable: `Integrate(figure)` returns a new pile
-with a landed figure's cells merged in, and `ClearCompleteRows()` returns a new
-pile with full rows removed.
+not move but mutates*. It is immutable, and it **owns the whole landing
+transition**. One operation does it all:
 
-The clear is genuinely **bottom-up**. A surviving cell drops by the number of
+```csharp
+public (Pile pile, IReadOnlyList<int> collapsedRows) Integrate(Piece piece)
+```
+
+`Integrate` merges the landed piece's cells, removes every row the piece
+completed, and returns the new pile — which by construction holds no complete
+row — together with the indices of the rows that collapsed. Row-completion and
+collapse are *private* helpers; the well never orchestrates them. The well's
+landing is therefore just: `(Pile, var collapsed) = Pile.Integrate(landed);
+ClearedLines += collapsed.Count; Active = null;` — no `if`, no row scan, no
+clearing logic leaking up into the aggregate root.
+
+The collapse is genuinely **bottom-up**. A surviving cell drops by the number of
 cleared rows strictly *below* it:
 
 ```csharp
@@ -162,84 +173,97 @@ above *two* vanished lines ends two rows lower; and a tower spanning a
 non-adjacent pair of cleared rows collapses correctly because each surviving
 cell counts only the clears beneath it. The tests pin all three cases.
 
-## Choosing the next piece, and determinism
+## The next piece comes from outside
 
-Deciding which tetromino comes next is honest domain logic, and the well makes
-that decision — but through a seam, [`IPieceSource`](domain/IPieceSource.cs), so
-the *policy* lives in one swappable place:
+The well does **not** decide which tetromino comes next — it is *told*. Spawning
+is an inbound operation: `Spawn(PieceType type)` places that type at the spawn
+anchor. Choosing the type — at random, from a fixed script, however the caller
+likes — lives entirely outside the domain. The console host rolls a `Random`;
+later a Puppeteer reaction will fill exactly the same seam.
 
-- `RandomPieceSource` picks each piece uniformly at random. It is the natural,
-  default source: the parameterless `new Well(width, height)` constructor uses
-  it, so an ordinary game is unpredictable.
-- `ScriptedPieceSource` hands out a fixed sequence. Supplied via
-  `new Well(width, height, source)`, it makes a game exactly reproducible — the
-  same sequence fed to a fresh well always produces the same play. The tests and
-  the demo use it.
+This makes the well a pure, deterministic function of *(construction + the
+stream of operations applied to it)*, with no hidden randomness inside it at
+all. Every value object is immutable, and a transition replaces a reference
+rather than mutating in place. The `DeterminismTests` replay the same command
+stream (spawns interleaved with moves) ten times and assert a single, identical
+state fingerprint.
 
-Once the piece sequence is fixed, the well is **deterministic**: the same
-construction, the same piece sequence, and the same sequence of verbs always
-reach the same state. Every value object is immutable, and a transition replaces
-a reference rather than mutating in place — the only nondeterminism anywhere is
-the random source, and it is injectable precisely so it can be pinned. The
-`DeterminismTests` replay the same script ten times and assert a single,
-identical state fingerprint.
+### Three states, and `IsAwaitingPiece`
+
+Because spawning is external, an empty active slot no longer means "game over".
+A well is in one of three states:
+
+- **falling** — `Active != null`, a piece is in play;
+- **between pieces** — `IsAwaitingPiece` (i.e. `Active is null && !IsGameOver`):
+  the last piece has settled and the well waits for the next `Spawn`;
+- **over** — `IsGameOver`.
+
+The construction opens an *empty* well in the between-pieces state, awaiting its
+first `Spawn`.
 
 ## The aggregate root and its verbs
 
 [`Well`](domain/Well.cs) is the only mutable thing in the model. It composes the
-`Frame`, the `Pile`, and the active `Piece`, and exposes guarded verbs (all
+`Frame`, the `Pile`, and the active `Piece`, and exposes an inbound surface (all
 `internal`, since the class itself is internal):
 
+- `Spawn(PieceType type)` — place a piece of that type at the spawn anchor.
+  Valid only when `IsAwaitingPiece`.
 - `MoveLeft()`, `MoveRight()` — shift the active piece one column and apply it
-  **iff** `!Collides(candidate)`; otherwise the move is rejected as a no-op.
+  **iff** `!Collides(candidate)`; otherwise the move is a no-op.
 - `Rotate()` — turn the active piece one step in the single rotation sense and
-  apply it iff the rotated pose does not collide. There are no wall-kicks (see
-  the trade-off below).
-- `Tick()` — descend one row if free; otherwise **land**: integrate the active
-  piece into the pile, clear complete rows bottom-up, and draw the next piece.
+  apply it iff the rotated pose does not collide. No wall-kicks (see the
+  trade-off below).
+- `Tick()` — descend one row if free; otherwise **land**.
 - `Drop()` — descend until resting, then land (the hard drop).
 
-**The game-over contract.** Operating on a *finished* game is an invalid request
-and throws `GameOverException` — a caller is expected to check `IsGameOver`
-first. A move that is merely *blocked* (it would collide with a wall or the
-pile) is a different thing entirely: it is valid and simply has no effect — the
-piece stays put and nothing is thrown. So `IsGameOver` is the question you ask
-before acting; a blocked nudge needs no guarding.
+…plus the read queries `Active`, `IsGameOver`, `IsAwaitingPiece`,
+`ClearedLines`, and `OccupiedInterior`.
 
-**Game-over is derived, not stored.** There is no boolean flag set somewhere and
-hoped to stay in sync. `IsGameOver` is computed: `SpawnRegion.Intersects(Pile)`
-— the game is over exactly when the pile has risen into the small region a new
-piece would be born into (the top two rows across the four spawn columns). The
-spawn region is itself a small figure, so the check is the same membership probe
-as collision. Landing settles the piece, clears rows, and sets `Active = null`,
-then spawns the next piece **only if** `!IsGameOver`; the terminal state is
-reached simply by not spawning — `Active` stays null and the derived
-`IsGameOver` stays true.
+**Landing does not spawn.** When `Tick`/`Drop` settles a piece, the well hands
+it to the pile, adds the collapsed-row count, sets `Active = null`, and stops
+there — leaving the between-pieces state. It does *not* draw the next piece; the
+host does, with `Spawn`, once it sees `IsAwaitingPiece`. Game-over is then simply
+the host observing `IsGameOver` and never spawning again.
 
-Drawing the next piece (`Spawn`) is **not** an external verb — it is `private`,
-triggered only by construction and by landing, and it fail-fast asserts its
-own precondition (it throws an internal `WellInvariantException` if ever called
-on a finished game). Likewise `Collides`, `Land`, `Shift`, `SpawnAnchor`,
-`SpawnRegion`, and `AssertInvariants` are all private; the surface is exactly
-the moves a player can make plus the read members the renderer needs
-(`IsGameOver`, `ClearedLines`, `OccupiedInterior`). A simple `ClearedLines`
-counter is the only score-like state kept, and it stays clean.
+**Query-first contract; one exception.** The operations are valid only in the
+right state, and otherwise throw the single [`TetrisRuleException`](domain/TetrisRuleException.cs):
+`Spawn` only when awaiting a piece (spawning while one is falling, or when over,
+throws); the move verbs only when a piece is active (moving while between pieces
+or over throws). A caller checks the queries (`Active` / `IsAwaitingPiece` /
+`IsGameOver`) *first* — it never relies on catching the exception. A move that
+is merely **blocked** (it would collide with a wall or the pile) is a different
+thing entirely: a valid no-op — the piece stays put and nothing is thrown.
+
+**Game-over is derived, not stored.** There is no boolean flag hoped to stay in
+sync. `IsGameOver` is computed: `SpawnRegion.Intersects(Pile)` — the game is over
+exactly when the pile has risen into the small region a new piece would be born
+into (the top two rows across the four spawn columns). The spawn region is itself
+a small figure, so the check is the same membership probe as collision; and when
+`IsAwaitingPiece` holds the spawn region is clear by definition, so the next
+`Spawn` always fits.
+
+`Collides`, `Land`, `Shift`, `SpawnAnchor`, `SpawnRegion`, and `AssertInvariants`
+are all `private`; the surface is exactly the operations a host issues plus the
+read queries. A simple `ClearedLines` counter is the only score-like state kept,
+and it stays clean.
 
 ## Invariants (and where they live)
 
 Every transition ends with `Well.AssertInvariants()`, the executable statement
 of what a valid well is. It never fires in correct play; it turns any modelling
-bug into a loud `WellInvariantException` rather than silent corruption.
+bug into a loud `TetrisRuleException` — the **single** exception the domain
+throws — rather than silent corruption.
 
 | Invariant | Enforced where |
 |---|---|
-| A piece has **exactly four** distinct cells | `Piece` constructor → `InvalidPieceException` |
+| A piece has **exactly four** distinct cells | `Piece` constructor → `TetrisRuleException` |
 | An orientation matches its piece's symmetry | `Piece` constructor (pose `DistinctCount` vs piece's count) |
-| There is an active piece **iff** the game is not over | `Well.AssertInvariants()` — `(Active is null) == IsGameOver`, where `IsGameOver` is *derived* from `SpawnRegion.Intersects(Pile)` |
+| Game over **implies** no active piece (one-directional) | `Well.AssertInvariants()` — `IsGameOver ⟹ Active is null`; `IsGameOver` is *derived* from `SpawnRegion.Intersects(Pile)`. (The converse fails on purpose: a null active piece may just mean *between pieces*.) |
 | The active piece rests in **free space** | `Well.AssertInvariants()` via the unified `Collides` |
 | Every occupied cell lies **inside the frame** | `Well.AssertInvariants()` via `Frame.Contains` |
-| The pile **never retains a complete row** | `Pile.ClearCompleteRows()` by construction; re-checked in `AssertInvariants()` |
-| **Determinism** of `(construction + piece sequence + verbs)` | All transitions replace immutable values; the only randomness is the injectable `IPieceSource` |
+| The pile **never retains a complete row** | `Pile.Integrate` collapses completed rows by construction; re-checked in `AssertInvariants()` |
+| **Determinism** of `(construction + operation stream)` | All transitions replace immutable values; the next piece is supplied from outside (`Spawn`), so there is no randomness inside the well |
 
 ## Build and run
 
@@ -277,9 +301,12 @@ interior; `|` and `=` draw the frame.
   anchored at row 0; the open sky above is interior. A different "spawn in the
   vanish zone above the field" convention is possible but does not change the
   spatial model.
-- **`Integrate` takes a `Shape`, not a `Piece`.** The pile cares only about
-  cells, not about which kind of figure they came from — the same indifference
-  that unifies collision. In play the figure is always the landed piece.
+- **The pile owns the collapse.** `Pile.Integrate(piece)` absorbs the landed
+  piece *and* clears completed rows in one call, returning the collapsed-row
+  indices. The well does no row-scanning or clearing orchestration. An
+  alternative would split absorb and clear into two steps the well sequences,
+  but that scatters the "a pile never keeps a complete row" invariant across two
+  callers; keeping it one operation keeps the invariant local.
 - **Rotation layouts.** The layouts follow the common SRS cell positions, but
   with simple pivot-free rotation (each pose is an independent layout). For a
   pure spatial model this is enough; a true SRS pivot is an extension.
@@ -292,17 +319,19 @@ those source files deliberately omit.
 
 In a later, separate phase the `Well` aggregate root becomes a Puppeteer V2
 actor. The deterministic shape is what makes that wrapping clean: an actor's
-journal records the sequence of verb invocations and is *replayed* to rebuild
+journal records the sequence of inbound operations and is *replayed* to rebuild
 state, so any nondeterminism would make two replays of the same journal diverge.
-The model is already a pure function of *(construction + piece sequence +
-verbs)*, with the one source of randomness — the next-piece draw — isolated
-behind `IPieceSource`. Under the framework that random draw is **captured**
-(via the framework's `Eval` mechanism, which records a nondeterministic result
-the first time and replays the recorded value thereafter), so a replayed journal
-reproduces the very same game even though the live game drew its pieces at
-random. The same actor will then be observed across three topologies — a console
-monolith, two decentralised phones, and a web screen with several simultaneous
-viewers — for the distributed-observation labs.
+The model is already a pure function of *(construction + operation stream)*, and
+the one source of randomness — *which piece to spawn* — has been pushed entirely
+outside the domain, behind the inbound `Spawn(type)` operation. The console host
+fills that seam with a `System.Random`; under the framework a reaction fills it
+instead, and the random draw it makes is **captured** (via the framework's
+`Eval` mechanism, which records a nondeterministic result the first time and
+replays the recorded value thereafter), so a replayed journal reproduces the
+very same game even though the live game spawned random pieces. The same actor
+will then be observed across three topologies — a console monolith, two
+decentralised phones, and a web screen with several simultaneous viewers — for
+the distributed-observation labs.
 
 ## Conceptual entry point
 

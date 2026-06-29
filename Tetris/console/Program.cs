@@ -1,39 +1,35 @@
 using System.Text;
 using Tetris;
 
-// A pure-domain demo. It opens a Well, feeds it a fixed piece sequence and a
-// fixed list of moves, and renders the well to the console after each step.
-// Because the domain is deterministic, this program prints the same thing on
-// every run: the same construction, the same piece sequence and the same verbs
-// always reach the same state.
+// A pure-domain demo. It opens an empty Well, supplies a fixed sequence of
+// pieces (the host chooses which piece comes — the domain is told via Spawn),
+// drives a fixed list of moves, and renders after each step. Deterministic: the
+// same construction and the same command stream always reach the same state.
 
 const int width = 10;
 const int height = 16;
 
-// The pieces that will enter, in order — an external, deterministic input.
-var pieces = new ScriptedPieceSource(
-    PieceType.I, PieceType.O, PieceType.T, PieceType.L,
-    PieceType.J, PieceType.S, PieceType.Z, PieceType.I,
-    PieceType.O, PieceType.T, PieceType.L, PieceType.J);
+var well = new Well(width, height);
 
-var well = new Well(width, height, pieces);
-
-// A scripted choreography of verbs. Each entry is one labelled step.
+// Each step labels a verb. The host spawns each piece, manoeuvres it, and drops
+// it before spawning the next.
 var script = new (string Label, Action<Well> Apply)[]
 {
-    ("spawn I",            _ => { }),
-    ("rotate I",           w => w.Rotate()),
-    ("slam I left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
-    ("drop I",             w => w.Drop()),
-    ("slam O left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
-    ("drop O",             w => w.Drop()),
-    ("nudge T right",      w => w.MoveRight()),
-    ("drop T",             w => w.Drop()),
-    ("drop L",             w => w.Drop()),
-    ("slam J right",       w => { w.MoveRight(); w.MoveRight(); w.MoveRight(); w.MoveRight(); }),
-    ("drop J",             w => w.Drop()),
-    ("drop S",             w => w.Drop()),
-    ("drop Z",             w => w.Drop()),
+    ("spawn I",       w => w.Spawn(PieceType.I)),
+    ("rotate I",      w => w.Rotate()),
+    ("slam I left",   w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
+    ("drop I",        w => w.Drop()),
+    ("spawn O",       w => w.Spawn(PieceType.O)),
+    ("slam O left",   w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
+    ("drop O",        w => w.Drop()),
+    ("spawn T",       w => w.Spawn(PieceType.T)),
+    ("nudge T right", w => w.MoveRight()),
+    ("drop T",        w => w.Drop()),
+    ("spawn L",       w => w.Spawn(PieceType.L)),
+    ("drop L",        w => w.Drop()),
+    ("spawn J",       w => w.Spawn(PieceType.J)),
+    ("slam J right",  w => { w.MoveRight(); w.MoveRight(); w.MoveRight(); w.MoveRight(); }),
+    ("drop J",        w => w.Drop()),
 };
 
 Render(well, "open");

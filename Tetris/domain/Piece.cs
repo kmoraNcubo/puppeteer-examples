@@ -48,7 +48,7 @@ internal abstract class Piece : Shape
         if (orientation.DistinctCount != DistinctOrientations)
         {
             // The pose was minted for a piece with a different symmetry.
-            throw new InvalidPieceException(
+            throw new TetrisRuleException(
                 $"{Type} has {DistinctOrientations} distinct orientations, but the pose declares {orientation.DistinctCount}.");
         }
 
@@ -62,7 +62,7 @@ internal abstract class Piece : Shape
         {
             // Either the layout did not declare four cells, or two cells
             // coincided. Both break the defining invariant of a tetromino.
-            throw new InvalidPieceException(
+            throw new TetrisRuleException(
                 $"{Type} in pose {orientation} occupies {_cells.Count} cells; a tetromino has exactly {CellCount}.");
         }
     }

@@ -11,11 +11,11 @@ namespace Tetris.Tests;
 public sealed class ShapeTests
 {
     [TestMethod]
-    public void Frame_IsAShape_OfWallAndFloorCells()
+    public void Frame_IsABoundaryPredicate_OccupiesWallsAndFloor_NotTheInterior()
     {
         var frame = new Frame(width: 4, height: 3);
 
-        // Walls at columns -1 and 4; floor at row 3.
+        // Walls at columns < 0 and >= width; floor at row >= height.
         Assert.IsTrue(frame.Occupies(new Position(0, -1)), "left wall");
         Assert.IsTrue(frame.Occupies(new Position(0, 4)), "right wall");
         Assert.IsTrue(frame.Occupies(new Position(3, 0)), "floor");
@@ -23,6 +23,12 @@ public sealed class ShapeTests
         // Interior cells are not part of the frame.
         Assert.IsFalse(frame.Occupies(new Position(0, 0)), "interior top-left");
         Assert.IsFalse(frame.Occupies(new Position(2, 3)), "interior bottom-right");
+
+        // The top is open: a row above 0 is not boundary.
+        Assert.IsFalse(frame.Occupies(new Position(-1, 1)), "the open sky above is not boundary");
+
+        // The boundary is a predicate, not a materialised set.
+        Assert.ThrowsException<System.NotSupportedException>(() => _ = frame.Cells);
     }
 
     [TestMethod]
@@ -65,7 +71,7 @@ public sealed class ShapeTests
         Assert.IsTrue(onFloor.Intersects(frame));
 
         // …and against the pile, the very same test catches a landed block.
-        var pile = Pile.Empty(4).Integrate(Tetromino.Spawn(PieceType.O, new Position(4, 0)));
+        var (pile, _) = Pile.Empty(4).Integrate(Tetromino.Spawn(PieceType.O, new Position(4, 0)));
         var ontoPile = Tetromino.Spawn(PieceType.O, new Position(3, 0)); // sits directly above
         Assert.IsTrue(ontoPile.Intersects(pile));
     }
