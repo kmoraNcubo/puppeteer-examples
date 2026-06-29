@@ -3,9 +3,11 @@
 A clean, infrastructure-free domain model of Tetris — pieces, the well, the
 pile, the boundary, collision, line clears, and game over — built as a showcase
 of rich object-oriented modelling. There is **no Puppeteer reference** anywhere
-in the domain: it is plain C# that builds and tests standalone. A later, separate
-phase will wrap the aggregate root as a Puppeteer V2 actor to run "distributed
-observation" labs (see the papers below). The solution is [`Tetris.sln`](Tetris.sln).
+in the domain: it is plain C# that builds and tests standalone, and its source
+reads as if no framework exists. A later, separate phase will wrap the aggregate
+root for the "distributed observation" labs — see
+[Where this is going](#where-this-is-going) below. The solution is
+[`Tetris.sln`](Tetris.sln).
 
 ## Layout
 
@@ -17,19 +19,23 @@ Tetris/
 └── console/        TetrisConsole demo           (pure domain, no Puppeteer)
 ```
 
-[`domain/`](domain/) holds the model. Its only public *anchor* is
-`TetrisDomain`, an empty type that lets a future host hand the assembly to the
-framework with `typeof(TetrisDomain).Assembly` — the same convention as
-HelloWorld's `WelcomeDomain`. The aggregate root, `Well`, is `internal`: nothing
-outside the assembly references it directly. The value objects it composes are
-public, because they are pure data with no behaviour worth hiding, but the
-verb-bearing root stays internal so that the framework reaches it by reflection
-later, not by a compile-time call.
+[`domain/`](domain/) holds the model. **Exactly one type is public** — the
+anchor `TetrisDomain`, an empty type that lets a host hand the assembly to a
+host with `typeof(TetrisDomain).Assembly`, the same convention as HelloWorld's
+`WelcomeDomain`. *Everything else is `internal`*: `Shape`, `Position`, `Piece`
+and its seven subclasses, `Pile`, `Frame`, `Orientation`, `PieceType`,
+`Tetromino`, the piece sources, the exceptions, and the aggregate root `Well`.
+From outside the assembly the model presents no surface at all but the anchor,
+so a caller cannot fabricate an invalid placement — there is no public
+`Position` to hand the well a cell outside the frame. The trusted insiders are
+the test suite and the console demo, granted access through
+`[assembly: InternalsVisibleTo(...)]` in [`AssemblyInfo.cs`](domain/AssemblyInfo.cs);
+a host reaches the verbs by reflection over the assembly.
 
 | Project | What it is |
 |---|---|
-| [`domain/`](domain/) | The clean DDD model. Immutable value objects + one mutable aggregate root. |
-| [`domain.tests/`](domain.tests/) | 35 MSTest cases covering geometry, collision, line clears, invariants, and determinism. |
+| [`domain/`](domain/) | The clean DDD model. Immutable value objects + one mutable aggregate root. Only `TetrisDomain` is public. |
+| [`domain.tests/`](domain.tests/) | 41 MSTest cases covering geometry, collision, line clears, invariants, and determinism. |
 | [`console/`](console/) | A pure-domain demo that plays a fixed script and renders the well as ASCII. |
 
 ## The unifying abstraction: figures within figures
@@ -44,7 +50,7 @@ or the pile.
 That single idea is expressed as the abstract [`Shape`](domain/Shape.cs):
 
 ```csharp
-public abstract class Shape
+internal abstract class Shape
 {
     public abstract ImmutableHashSet<Position> Cells { get; }
     public bool Occupies(Position p) => Cells.Contains(p);
@@ -96,16 +102,20 @@ that difference *naturally* rather than with conditionals:
 
 | Piece | Distinct orientations | Why |
 |---|---|---|
-| `O` | 1 | The square looks the same from every side; `Rotate()` is a no-op. |
+| `O` | 1 | The square looks the same from every side; rotation is a no-op. |
 | `I`, `S`, `Z` | 2 | A bar or skew has only two appearances. |
 | `T`, `J`, `L` | 4 | Each pose is genuinely distinct. |
 
 [`Orientation`](domain/Orientation.cs) is a value object that knows its piece's
 `DistinctCount` and cycles `Index` modulo that count, so `O` never leaves pose
-0, `S` toggles 0↔1, and `T` walks 0→1→2→3→0. Rotation is immutable: `Rotate()`
-returns a *new* piece; `Translate(offset)` likewise. A piece never mutates and
-never knows about walls or the pile — only about its own shape. The well decides
-legality; the piece only offers candidates.
+0, `S` toggles 0↔1, and `T` walks 0→1→2→3→0. Rotation is **directional**:
+`Piece.Rotate(RotationDirection)` steps the index forward for `Clockwise` and
+backward for `CounterClockwise`, wrapping at the piece's distinct count, so the
+two directions are exact inverses (turn one way then the other and you are back
+where you started). Rotation is immutable: `Rotate` returns a *new* piece;
+`Translate(offset)` likewise. A piece never mutates and never knows about walls
+or the pile — only about its own shape. The well decides legality; the piece
+only offers candidates.
 
 ## The pile mutates bottom-up
 
@@ -127,33 +137,51 @@ above *two* vanished lines ends two rows lower; and a tower spanning a
 non-adjacent pair of cleared rows collapses correctly because each surviving
 cell counts only the clears beneath it. The tests pin all three cases.
 
-## Determinism: the next piece comes from outside
+## Choosing the next piece, and determinism
 
-The well never rolls dice. Piece selection is an **external** input through
-[`IPieceSource`](domain/IPieceSource.cs); the tests and the demo use a
-`ScriptedPieceSource` that hands out a fixed sequence. This is deliberate. The
-`Well` is engineered to become a Puppeteer actor whose journal of verb
-invocations is replayed; an internal `Random` would make two replays of the same
-journal diverge. By demanding the next piece from the outside, the well stays a
-pure function of *(initial size + piece sequence + verb sequence)*. The
+Deciding which tetromino comes next is honest domain logic, and the well makes
+that decision — but through a seam, [`IPieceSource`](domain/IPieceSource.cs), so
+the *policy* lives in one swappable place:
+
+- `RandomPieceSource` picks each piece uniformly at random. It is the natural,
+  default source: the parameterless `new Well(width, height)` constructor uses
+  it, so an ordinary game is unpredictable.
+- `ScriptedPieceSource` hands out a fixed sequence. Supplied via
+  `new Well(width, height, source)`, it makes a game exactly reproducible — the
+  same sequence fed to a fresh well always produces the same play. The tests and
+  the demo use it.
+
+Once the piece sequence is fixed, the well is **deterministic**: the same
+construction, the same piece sequence, and the same sequence of verbs always
+reach the same state. Every value object is immutable, and a transition replaces
+a reference rather than mutating in place — the only nondeterminism anywhere is
+the random source, and it is injectable precisely so it can be pinned. The
 `DeterminismTests` replay the same script ten times and assert a single,
 identical state fingerprint.
 
 ## The aggregate root and its verbs
 
 [`Well`](domain/Well.cs) is the only mutable thing in the model. It composes the
-`Frame`, the `Pile`, and the active `Piece`, and exposes guarded verbs:
+`Frame`, the `Pile`, and the active `Piece`, and exposes guarded verbs (all
+`internal`, since the class itself is internal):
 
-- `MoveLeft()`, `MoveRight()`, `Rotate()` — compute the candidate placement and
-  apply it **iff** `!Collides(candidate)`; otherwise the move is rejected as a
-  no-op. There are no wall-kicks (see the trade-off below).
+- `MoveLeft()`, `MoveRight()` — shift the active piece one column and apply it
+  **iff** `!Collides(candidate)`; otherwise the move is rejected as a no-op.
+- `Rotate(RotationDirection)`, with `RotateClockwise()` / `RotateCounterClockwise()`
+  convenience verbs — turn the active piece and apply it iff the rotated pose
+  does not collide. There are no wall-kicks (see the trade-off below).
 - `Tick()` — descend one row if free; otherwise **land**: integrate the active
   piece into the pile, clear complete rows bottom-up, and draw the next piece.
 - `Drop()` — descend until resting, then land (the hard drop).
 
-A newly spawned piece that immediately collides ends the game (`IsGameOver`),
-after which the verbs are inert. A simple `ClearedLines` counter is the only
-score-like state kept, and it stays clean.
+Drawing the next piece (`Spawn`) is **not** an external verb — it is `private`,
+triggered only by construction and by landing. Likewise `Collides`, `Land`,
+`TryShift`, `SpawnAnchor`, and `AssertInvariants` are all private; the surface
+is exactly the moves a player can make plus the read members the renderer needs
+(`IsGameOver`, `ClearedLines`, `OccupiedInterior`). A newly spawned piece that
+immediately collides ends the game (`IsGameOver`), after which the verbs are
+inert. A simple `ClearedLines` counter is the only score-like state kept, and it
+stays clean.
 
 ## Invariants (and where they live)
 
@@ -165,10 +193,11 @@ bug into a loud `WellInvariantException` rather than silent corruption.
 |---|---|
 | A piece has **exactly four** distinct cells | `Piece` constructor → `InvalidPieceException` |
 | An orientation matches its piece's symmetry | `Piece` constructor (pose `DistinctCount` vs piece's count) |
+| There is an active piece **iff** the game is not over | `Well.AssertInvariants()` — `(Active is null) == IsGameOver` |
 | The active piece rests in **free space** | `Well.AssertInvariants()` via the unified `Collides` |
 | Every occupied cell lies **inside the frame** | `Well.AssertInvariants()` via `Frame.Contains` |
 | The pile **never retains a complete row** | `Pile.ClearCompleteRows()` by construction; re-checked in `AssertInvariants()` |
-| **Determinism** of `(state + inputs)` | No internal RNG; piece input is external (`IPieceSource`) |
+| **Determinism** of `(construction + piece sequence + verbs)` | All transitions replace immutable values; the only randomness is the injectable `IPieceSource` |
 
 ## Build and run
 
@@ -203,6 +232,26 @@ interior; `|` and `=` draw the frame.
 - **Rotation system.** The layouts follow the common SRS cell positions, but
   with simple pivot-free rotation (each pose is an independent layout). For a
   pure spatial model this is enough; a true SRS pivot is an extension.
+
+## Where this is going
+
+The domain above is deliberately framework-free; nothing in its source mentions
+Puppeteer, actors, or journals. This section is the forward-looking framing that
+those source files deliberately omit.
+
+In a later, separate phase the `Well` aggregate root becomes a Puppeteer V2
+actor. The deterministic shape is what makes that wrapping clean: an actor's
+journal records the sequence of verb invocations and is *replayed* to rebuild
+state, so any nondeterminism would make two replays of the same journal diverge.
+The model is already a pure function of *(construction + piece sequence +
+verbs)*, with the one source of randomness — the next-piece draw — isolated
+behind `IPieceSource`. Under the framework that random draw is **captured**
+(via the framework's `Eval` mechanism, which records a nondeterministic result
+the first time and replays the recorded value thereafter), so a replayed journal
+reproduces the very same game even though the live game drew its pieces at
+random. The same actor will then be observed across three topologies — a console
+monolith, two decentralised phones, and a web screen with several simultaneous
+viewers — for the distributed-observation labs.
 
 ## Conceptual entry point
 

@@ -115,30 +115,50 @@ public sealed class WellTests
         var well = NarrowWell(4, 8, PieceType.I, PieceType.I);
 
         Assert.AreEqual(0, well.Active!.Orientation.Index, "spawns horizontal");
-        well.Rotate();
+        well.RotateClockwise();
         Assert.AreEqual(1, well.Active!.Orientation.Index, "rotates to vertical in open space");
-        well.Rotate();
+        well.RotateClockwise();
         Assert.AreEqual(0, well.Active!.Orientation.Index, "toggles back to horizontal");
     }
 
     [TestMethod]
-    public void Rotate_IsRejectedWhenItWouldCollideWithTheRightWall()
+    public void RotateCounterClockwise_ReversesClockwise_ThroughTheWell()
     {
-        // Width 4, height 8. Slide the horizontal I-piece (cols 0..3) — it is
-        // already wall-to-wall, so it cannot move. Its vertical pose occupies
-        // column 2 only, which fits, so to force a wall rejection we use the
-        // J-piece against the right wall instead.
-        //
-        // J spawn (width 4, anchor col 0): pose 0 cells (0,0)(1,0)(1,1)(1,2).
-        // Move it right to the wall: cols shift to (0,1)(1,1)(1,2)(1,3).
-        // Rotating clockwise to pose 1 would need column 3+? pose 1 local cells
-        // are (0,1)(0,2)(1,1)(2,1); anchored at column 1 that is columns 2 and 3
-        // — still inside. So instead use the O-square (one pose) to show a
-        // no-op, and prove pile-rejection in the dedicated test below.
-        var well = NarrowWell(4, 8, PieceType.O, PieceType.O);
+        // Width 6, height 8 so a tee has room to turn freely. The tee cycles
+        // 0->1->2->3 clockwise; counter-clockwise must walk it back the same way.
+        var well = NarrowWell(6, 8, PieceType.T, PieceType.T);
+
+        well.RotateClockwise();
+        Assert.AreEqual(1, well.Active!.Orientation.Index);
+        well.RotateClockwise();
+        Assert.AreEqual(2, well.Active!.Orientation.Index);
+
+        well.RotateCounterClockwise();
+        Assert.AreEqual(1, well.Active!.Orientation.Index, "counter-clockwise steps back");
+        well.RotateCounterClockwise();
+        Assert.AreEqual(0, well.Active!.Orientation.Index);
+        well.RotateCounterClockwise();
+        Assert.AreEqual(3, well.Active!.Orientation.Index, "wraps below zero to the last pose");
+    }
+
+    [TestMethod]
+    public void Rotate_IsRejectedWhenItWouldCollideWithTheWall()
+    {
+        // Width 4, height 8. The I-piece spawns horizontal (cols 0..3, row 1).
+        // Turn it vertical (column 2), then shove it to the left wall. Turning
+        // it back to horizontal there would sweep columns -2..1 — across the
+        // left wall — so the rotation must be rejected.
+        var well = NarrowWell(4, 8, PieceType.I, PieceType.I);
+
+        well.RotateClockwise();   // -> vertical, column 2
+        well.MoveLeft();          // -> column 1
+        well.MoveLeft();          // -> column 0 (against the left wall)
+        Assert.IsTrue(well.Active!.Occupies(new Position(0, 0)), "vertical bar at the left wall");
+
         var before = well.Active!.Cells;
-        well.Rotate(); // O has a single pose: a genuine no-op
-        Assert.IsTrue(well.Active!.Cells.SetEquals(before));
+        well.RotateCounterClockwise(); // back to horizontal would cross the wall
+        Assert.IsTrue(well.Active!.Cells.SetEquals(before), "rotation into the wall rejected");
+        Assert.AreEqual(1, well.Active!.Orientation.Index, "still vertical");
     }
 
     [TestMethod]
@@ -175,7 +195,7 @@ public sealed class WellTests
         Assert.IsTrue(well.Active!.Occupies(new Position(5, 2)), "I rests at row 5");
 
         var beforeRotate = well.Active!.Cells;
-        well.Rotate(); // vertical would be column 2 rows 4..7; rows 6,7 are filled
+        well.RotateClockwise(); // vertical would be column 2 rows 4..7; rows 6,7 are filled
         Assert.IsTrue(well.Active!.Cells.SetEquals(beforeRotate), "rotation into the pile rejected");
         Assert.AreEqual(0, well.Active!.Orientation.Index, "still horizontal");
     }
@@ -260,7 +280,7 @@ public sealed class WellTests
         // Verbs are inert after game over.
         well.MoveLeft();
         well.Tick();
-        well.Rotate();
+        well.RotateClockwise();
         Assert.IsTrue(well.IsGameOver);
     }
 
@@ -272,5 +292,32 @@ public sealed class WellTests
 
         Assert.IsTrue(well.IsGameOver, "the first piece collides with the floor on spawn");
         Assert.IsNull(well.Active);
+    }
+
+    [TestMethod]
+    public void ActivePieceExists_IfAndOnlyIf_TheGameIsNotOver()
+    {
+        // While play continues there is always an active piece…
+        var playing = NarrowWell(4, 6, PieceType.O, PieceType.O);
+        Assert.IsFalse(playing.IsGameOver);
+        Assert.IsNotNull(playing.Active);
+
+        // …and once the game is over there is none. (The invariant is also
+        // checked inside the well after every transition.)
+        var over = NarrowWell(4, 1, PieceType.O);
+        Assert.IsTrue(over.IsGameOver);
+        Assert.IsNull(over.Active);
+    }
+
+    [TestMethod]
+    public void DefaultConstructor_DrawsItsPiecesAtRandom_AndOpensPlayable()
+    {
+        // No source supplied: the well decides the next piece itself, at random.
+        // On a normal-sized board the first piece always fits, so play opens.
+        var well = new Well(10, 20);
+
+        Assert.IsFalse(well.IsGameOver);
+        Assert.IsNotNull(well.Active);
+        CollectionAssert.Contains(System.Enum.GetValues<PieceType>(), well.Active!.Type);
     }
 }

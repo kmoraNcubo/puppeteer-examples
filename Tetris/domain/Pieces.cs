@@ -10,7 +10,7 @@ namespace Tetris;
 // this?" — they speak only Shape and Piece.
 
 /// <summary>The bar. Two poses: horizontal and vertical.</summary>
-public sealed class IPiece : Piece
+internal sealed class IPiece : Piece
 {
     public IPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -28,7 +28,7 @@ public sealed class IPiece : Piece
 }
 
 /// <summary>The square. One pose: rotation leaves it unchanged.</summary>
-public sealed class OPiece : Piece
+internal sealed class OPiece : Piece
 {
     public OPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -43,7 +43,7 @@ public sealed class OPiece : Piece
 }
 
 /// <summary>The tee. Four poses: point up, right, down, left.</summary>
-public sealed class TPiece : Piece
+internal sealed class TPiece : Piece
 {
     public TPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -63,7 +63,7 @@ public sealed class TPiece : Piece
 }
 
 /// <summary>The right-handed skew. Two poses.</summary>
-public sealed class SPiece : Piece
+internal sealed class SPiece : Piece
 {
     public SPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -81,7 +81,7 @@ public sealed class SPiece : Piece
 }
 
 /// <summary>The left-handed skew. Two poses.</summary>
-public sealed class ZPiece : Piece
+internal sealed class ZPiece : Piece
 {
     public ZPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -99,7 +99,7 @@ public sealed class ZPiece : Piece
 }
 
 /// <summary>The blue ell. Four poses.</summary>
-public sealed class JPiece : Piece
+internal sealed class JPiece : Piece
 {
     public JPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 
@@ -119,7 +119,7 @@ public sealed class JPiece : Piece
 }
 
 /// <summary>The orange ell. Four poses.</summary>
-public sealed class LPiece : Piece
+internal sealed class LPiece : Piece
 {
     public LPiece(Position anchor, Orientation orientation) : base(anchor, orientation) { }
 

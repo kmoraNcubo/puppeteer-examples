@@ -14,7 +14,7 @@ namespace Tetris;
 /// be replayed deterministically.
 /// </para>
 /// </summary>
-public readonly record struct Position(int Row, int Column)
+internal readonly record struct Position(int Row, int Column)
 {
     /// <summary>Returns the position shifted by <paramref name="offset"/>.</summary>
     public Position Translate(Offset offset) =>
@@ -29,7 +29,7 @@ public readonly record struct Position(int Row, int Column)
 /// honest (a point is not a vector) and gives the move verbs a vocabulary —
 /// <see cref="Down"/>, <see cref="Left"/>, <see cref="Right"/>.
 /// </summary>
-public readonly record struct Offset(int Rows, int Columns)
+internal readonly record struct Offset(int Rows, int Columns)
 {
     /// <summary>One row toward the floor — the direction of a fall.</summary>
     public static readonly Offset Down = new(1, 0);

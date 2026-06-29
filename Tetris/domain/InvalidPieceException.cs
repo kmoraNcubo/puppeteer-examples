@@ -8,7 +8,7 @@ namespace Tetris;
 /// malformed piece fails loudly rather than letting a degenerate shape leak
 /// into the well.
 /// </summary>
-public sealed class InvalidPieceException : Exception
+internal sealed class InvalidPieceException : Exception
 {
     public InvalidPieceException(string message) : base(message)
     {

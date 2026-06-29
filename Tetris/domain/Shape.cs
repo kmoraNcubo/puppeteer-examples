@@ -17,7 +17,7 @@ namespace Tetris;
 /// abstract — a shape knows nothing of walls, scores, timers, or rendering.
 /// </para>
 /// </summary>
-public abstract class Shape
+internal abstract class Shape
 {
     /// <summary>The cells this shape occupies. Never empty for a piece; may be
     /// empty for an early <see cref="Pile"/>.</summary>

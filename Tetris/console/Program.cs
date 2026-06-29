@@ -1,11 +1,11 @@
 using System.Text;
 using Tetris;
 
-// A PURE-DOMAIN demo: no Puppeteer, no infrastructure. It opens a Well, feeds
-// it a fixed piece sequence and a fixed list of moves, and renders the well to
-// the console after each step. Because the domain is deterministic, this
-// program prints the same thing on every run — the same property that will let
-// the Well become a replayable Puppeteer actor later.
+// A pure-domain demo. It opens a Well, feeds it a fixed piece sequence and a
+// fixed list of moves, and renders the well to the console after each step.
+// Because the domain is deterministic, this program prints the same thing on
+// every run: the same construction, the same piece sequence and the same verbs
+// always reach the same state.
 
 const int width = 10;
 const int height = 16;
@@ -22,7 +22,7 @@ var well = new Well(width, height, pieces);
 var script = new (string Label, Action<Well> Apply)[]
 {
     ("spawn I",            _ => { }),
-    ("rotate I",           w => w.Rotate()),
+    ("rotate I",           w => w.RotateClockwise()),
     ("slam I left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
     ("drop I",             w => w.Drop()),
     ("slam O left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),

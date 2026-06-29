@@ -7,15 +7,4 @@
     <AssemblyName>TetrisDomain</AssemblyName>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- The verb-bearing Well is internal, per the repository convention: a
-         host reaches the domain only through reflection over the assembly. The
-         invariant tests, however, drive the aggregate root directly, so the
-         test assembly is granted access to internals. -->
-    <InternalsVisibleTo Include="TetrisDomain.Tests" />
-    <!-- The pure-domain console demo also drives the Well directly; later, the
-         framework host will reach it by reflection instead. -->
-    <InternalsVisibleTo Include="TetrisConsole" />
-  </ItemGroup>
-
 </Project>

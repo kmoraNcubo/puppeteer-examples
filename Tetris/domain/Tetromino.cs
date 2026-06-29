@@ -7,7 +7,7 @@ namespace Tetris;
 /// type, and keeps each piece's distinct-orientation count next to its
 /// geometry rather than scattered.
 /// </summary>
-public static class Tetromino
+internal static class Tetromino
 {
     /// <summary>
     /// Creates the tetromino of the given <paramref name="type"/> at its spawn

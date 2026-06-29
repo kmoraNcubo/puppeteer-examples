@@ -18,7 +18,7 @@ namespace Tetris;
 /// walls or pile, only of its own shape.
 /// </para>
 /// </summary>
-public abstract class Piece : Shape
+internal abstract class Piece : Shape
 {
     /// <summary>The number of cells every tetromino has, by definition.</summary>
     public const int CellCount = 4;
@@ -41,8 +41,7 @@ public abstract class Piece : Shape
     /// <summary>
     /// Builds a piece at <paramref name="anchor"/> in pose
     /// <paramref name="orientation"/>, materialising and validating its four
-    /// world cells. Subclasses route here through
-    /// <see cref="Create{TPiece}"/>.
+    /// world cells.
     /// </summary>
     protected Piece(Position anchor, Orientation orientation)
     {
@@ -86,8 +85,12 @@ public abstract class Piece : Shape
     public Piece Translate(Offset offset) =>
         Rebuild(Anchor.Translate(offset), Orientation);
 
-    /// <summary>This piece turned one quarter-turn clockwise — same anchor, next pose.</summary>
-    public Piece Rotate() => Rebuild(Anchor, Orientation.Next());
+    /// <summary>
+    /// This piece turned one quarter-turn in the given direction — same anchor,
+    /// adjacent pose. Returns a new piece; the original is unchanged.
+    /// </summary>
+    public Piece Rotate(RotationDirection direction) =>
+        Rebuild(Anchor, Orientation.Turn(direction));
 
     /// <summary>Reconstructs a piece of the concrete subtype with new state.</summary>
     protected abstract Piece Rebuild(Position anchor, Orientation orientation);

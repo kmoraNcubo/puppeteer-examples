@@ -9,7 +9,7 @@ namespace Tetris;
 /// correct play it never fires; it exists so that a modelling mistake surfaces
 /// immediately and loudly instead of corrupting the game silently.
 /// </summary>
-public sealed class WellInvariantException : Exception
+internal sealed class WellInvariantException : Exception
 {
     public WellInvariantException(string message) : base(message)
     {

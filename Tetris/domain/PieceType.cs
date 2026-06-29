@@ -6,7 +6,7 @@ namespace Tetris;
 /// <see cref="Piece"/> subclass, so adding a (hypothetical) eighth piece is a
 /// new subclass and a new enum member, nothing else.
 /// </summary>
-public enum PieceType
+internal enum PieceType
 {
     /// <summary>Four cells in a line. Two distinct orientations.</summary>
     I,

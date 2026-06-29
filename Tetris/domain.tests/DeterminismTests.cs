@@ -8,15 +8,14 @@ namespace Tetris.Tests;
 /// <summary>
 /// The property the whole model is shaped around: a well is a pure function of
 /// its initial size, its piece sequence, and the sequence of verbs applied to
-/// it. Replaying the same inputs yields a byte-for-byte identical state. This
-/// is what will let the well become a Puppeteer actor whose journal can be
-/// replayed without divergence — there is no hidden randomness anywhere.
+/// it. Replaying the same inputs yields a byte-for-byte identical state — there
+/// is no hidden randomness anywhere once the piece sequence is supplied.
 /// </summary>
 [TestClass]
 public sealed class DeterminismTests
 {
     /// <summary>The fixed move script applied to each replay.</summary>
-    private enum Move { Left, Right, Rotate, Tick, Drop }
+    private enum Move { Left, Right, RotateCw, RotateCcw, Tick, Drop }
 
     private static readonly PieceType[] Sequence =
     [
@@ -27,10 +26,10 @@ public sealed class DeterminismTests
 
     private static readonly Move[] Script =
     [
-        Move.Left, Move.Rotate, Move.Tick, Move.Right, Move.Drop,
-        Move.Rotate, Move.Rotate, Move.Left, Move.Drop, Move.Tick,
+        Move.Left, Move.RotateCw, Move.Tick, Move.Right, Move.Drop,
+        Move.RotateCw, Move.RotateCcw, Move.Left, Move.Drop, Move.Tick,
         Move.Right, Move.Drop, Move.Left, Move.Left, Move.Drop,
-        Move.Rotate, Move.Drop, Move.Tick, Move.Tick, Move.Drop,
+        Move.RotateCcw, Move.Drop, Move.Tick, Move.Tick, Move.Drop,
     ];
 
     private static Well Replay()
@@ -42,7 +41,8 @@ public sealed class DeterminismTests
             {
                 case Move.Left: well.MoveLeft(); break;
                 case Move.Right: well.MoveRight(); break;
-                case Move.Rotate: well.Rotate(); break;
+                case Move.RotateCw: well.RotateClockwise(); break;
+                case Move.RotateCcw: well.RotateCounterClockwise(); break;
                 case Move.Tick: well.Tick(); break;
                 case Move.Drop: well.Drop(); break;
             }

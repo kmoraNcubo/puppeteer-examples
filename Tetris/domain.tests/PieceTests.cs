@@ -18,12 +18,12 @@ public sealed class PieceTests
     private static ImmutableHashSet<Position> CellsOf(params (int Row, int Column)[] cells) =>
         cells.Select(c => new Position(c.Row, c.Column)).ToImmutableHashSet();
 
-    /// <summary>Rotates a piece <paramref name="times"/> times and returns the resulting cells.</summary>
+    /// <summary>Rotates a piece clockwise <paramref name="times"/> times and returns the resulting cells.</summary>
     private static ImmutableHashSet<Position> PoseAfter(Piece piece, int times)
     {
         for (var i = 0; i < times; i++)
         {
-            piece = piece.Rotate();
+            piece = piece.Rotate(RotationDirection.Clockwise);
         }
 
         return piece.Cells;
@@ -41,7 +41,7 @@ public sealed class PieceTests
             var rotated = piece;
             for (var i = 0; i < 4; i++)
             {
-                rotated = rotated.Rotate();
+                rotated = rotated.Rotate(RotationDirection.Clockwise);
                 Assert.AreEqual(Piece.CellCount, rotated.Cells.Count, $"{type} after {i + 1} rotations");
             }
         }
@@ -158,12 +158,66 @@ public sealed class PieceTests
     public void Rotate_ReturnsANewImmutablePiece()
     {
         var t = Tetromino.Spawn(PieceType.T, new Position(5, 5));
-        var rotated = t.Rotate();
+        var rotated = t.Rotate(RotationDirection.Clockwise);
 
         Assert.AreNotSame(t, rotated);
         Assert.AreEqual(0, t.Orientation.Index, "original is unchanged");
         Assert.AreEqual(1, rotated.Orientation.Index);
         Assert.AreEqual(t.Anchor, rotated.Anchor, "rotation keeps the anchor");
+    }
+
+    [TestMethod]
+    public void CounterClockwise_StepsToThePreviousPose_WrappingAtZero()
+    {
+        // The tee has four poses. One step counter-clockwise from the spawn pose
+        // wraps to the last pose (0 -> 3), the exact reverse of clockwise.
+        var t = Tetromino.Spawn(PieceType.T, Origin);
+        var ccw = t.Rotate(RotationDirection.CounterClockwise);
+
+        Assert.AreEqual(3, ccw.Orientation.Index, "0 wraps back to the last pose");
+
+        var poses = new[]
+        {
+            CellsOf((0, 1), (1, 0), (1, 1), (1, 2)),
+            CellsOf((0, 1), (1, 1), (1, 2), (2, 1)),
+            CellsOf((1, 0), (1, 1), (1, 2), (2, 1)),
+            CellsOf((0, 1), (1, 0), (1, 1), (2, 1)),
+        };
+        Assert.IsTrue(poses[3].SetEquals(ccw.Cells));
+    }
+
+    [TestMethod]
+    public void CounterClockwise_IsTheExactInverseOfClockwise()
+    {
+        // For every piece, turning one way then the other returns the original
+        // pose, regardless of how many distinct orientations it has.
+        foreach (PieceType type in System.Enum.GetValues<PieceType>())
+        {
+            var piece = Tetromino.Spawn(type, Origin);
+
+            var roundTrip = piece
+                .Rotate(RotationDirection.Clockwise)
+                .Rotate(RotationDirection.CounterClockwise);
+            Assert.IsTrue(piece.Cells.SetEquals(roundTrip.Cells), $"{type} CW then CCW");
+
+            var otherWay = piece
+                .Rotate(RotationDirection.CounterClockwise)
+                .Rotate(RotationDirection.Clockwise);
+            Assert.IsTrue(piece.Cells.SetEquals(otherWay.Cells), $"{type} CCW then CW");
+        }
+    }
+
+    [TestMethod]
+    public void OPiece_IsFixedUnderRotationInEitherDirection()
+    {
+        var o = Tetromino.Spawn(PieceType.O, Origin);
+        var cw = o.Rotate(RotationDirection.Clockwise);
+        var ccw = o.Rotate(RotationDirection.CounterClockwise);
+
+        Assert.AreEqual(0, cw.Orientation.Index, "square stays in pose 0 clockwise");
+        Assert.AreEqual(0, ccw.Orientation.Index, "square stays in pose 0 counter-clockwise");
+        Assert.IsTrue(o.Cells.SetEquals(cw.Cells));
+        Assert.IsTrue(o.Cells.SetEquals(ccw.Cells));
     }
 
     [TestMethod]

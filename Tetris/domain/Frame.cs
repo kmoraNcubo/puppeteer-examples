@@ -19,7 +19,7 @@ namespace Tetris;
 /// top edge to the frame.
 /// </para>
 /// </summary>
-public sealed class Frame : Shape
+internal sealed class Frame : Shape
 {
     /// <summary>Number of interior columns (the playable width).</summary>
     public int Width { get; }

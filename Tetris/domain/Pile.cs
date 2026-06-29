@@ -19,7 +19,7 @@ namespace Tetris;
 /// is the canonical way to settle a pile after a landing.
 /// </para>
 /// </summary>
-public sealed class Pile : Shape
+internal sealed class Pile : Shape
 {
     /// <summary>The well's interior width; sets what "a complete row" means.</summary>
     public int Width { get; }
