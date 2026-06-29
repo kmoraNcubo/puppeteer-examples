@@ -29,6 +29,11 @@ Paper 1 (*Anti-porosity*) is the conceptual entry point.
 - [`HelloWorld/`](HelloWorld/) — one actor, one verb, two storage backends
   (`IN_MEMORY` and `FileSystem`). The minimal first contact with the
   framework. *Por uno se empieza.*
+- [`Tetris/`](Tetris/) — a clean, infrastructure-free DDD model of Tetris
+  (pieces, well, pile, boundary, collision, line clears) built around one
+  abstraction: everything occupied is a *figure of cells*. No Puppeteer
+  reference yet; a later phase wraps the aggregate root as an actor for the
+  distributed-observation labs.
 
 ## How to run
 
