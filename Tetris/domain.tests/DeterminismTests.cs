@@ -15,21 +15,22 @@ namespace Tetris.Tests;
 public sealed class DeterminismTests
 {
     /// <summary>The fixed move script applied to each replay.</summary>
-    private enum Move { Left, Right, RotateCw, RotateCcw, Tick, Drop }
+    private enum Move { Left, Right, Rotate, Tick, Drop }
 
     private static readonly PieceType[] Sequence =
     [
         PieceType.T, PieceType.I, PieceType.O, PieceType.S,
         PieceType.Z, PieceType.J, PieceType.L, PieceType.T,
-        PieceType.O, PieceType.I,
+        PieceType.O, PieceType.I, PieceType.S, PieceType.Z,
+        PieceType.J, PieceType.L, PieceType.O, PieceType.T,
     ];
 
     private static readonly Move[] Script =
     [
-        Move.Left, Move.RotateCw, Move.Tick, Move.Right, Move.Drop,
-        Move.RotateCw, Move.RotateCcw, Move.Left, Move.Drop, Move.Tick,
+        Move.Left, Move.Rotate, Move.Tick, Move.Right, Move.Drop,
+        Move.Rotate, Move.Rotate, Move.Left, Move.Drop, Move.Tick,
         Move.Right, Move.Drop, Move.Left, Move.Left, Move.Drop,
-        Move.RotateCcw, Move.Drop, Move.Tick, Move.Tick, Move.Drop,
+        Move.Rotate, Move.Drop, Move.Tick, Move.Tick, Move.Drop,
     ];
 
     private static Well Replay()
@@ -41,8 +42,7 @@ public sealed class DeterminismTests
             {
                 case Move.Left: well.MoveLeft(); break;
                 case Move.Right: well.MoveRight(); break;
-                case Move.RotateCw: well.RotateClockwise(); break;
-                case Move.RotateCcw: well.RotateCounterClockwise(); break;
+                case Move.Rotate: well.Rotate(); break;
                 case Move.Tick: well.Tick(); break;
                 case Move.Drop: well.Drop(); break;
             }

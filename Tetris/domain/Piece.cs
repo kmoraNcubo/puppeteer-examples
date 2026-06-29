@@ -86,11 +86,11 @@ internal abstract class Piece : Shape
         Rebuild(Anchor.Translate(offset), Orientation);
 
     /// <summary>
-    /// This piece turned one quarter-turn in the given direction — same anchor,
-    /// adjacent pose. Returns a new piece; the original is unchanged.
+    /// This piece turned one quarter-turn — same anchor, next pose in the single
+    /// rotation sense. Returns a new piece; the original is unchanged. For the
+    /// square this is a no-op (one pose), with no effect and no error.
     /// </summary>
-    public Piece Rotate(RotationDirection direction) =>
-        Rebuild(Anchor, Orientation.Turn(direction));
+    public Piece Rotate() => Rebuild(Anchor, Orientation.Next());
 
     /// <summary>Reconstructs a piece of the concrete subtype with new state.</summary>
     protected abstract Piece Rebuild(Position anchor, Orientation orientation);

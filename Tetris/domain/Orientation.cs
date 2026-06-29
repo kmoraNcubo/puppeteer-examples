@@ -4,12 +4,13 @@ namespace Tetris;
 /// A rotation state, counted in quarter-turns from the piece's spawn pose. The
 /// value object always holds a canonical index in <c>[0, count)</c>, where
 /// <c>count</c> is how many <em>distinct</em> poses the piece has: 1 for the
-/// square, 2 for the bars and skews, 4 for the tee and the ells.
+/// square, 2 for the bar and the skews, 4 for the tee and the ells.
 /// <para>
 /// Modelling the count here — rather than hard-coding "rotate four times" — is
 /// what lets each <see cref="Piece"/> subclass advertise its own symmetry and
-/// have <see cref="Turn"/> cycle correctly in either direction. An O piece's
-/// orientation never leaves 0; an S piece's toggles 0↔1.
+/// have <see cref="Next"/> cycle correctly. Rotation turns in a single sense,
+/// as in the classic original; cycling through it reaches every pose. An O
+/// piece's orientation never leaves 0; an S piece's toggles 0↔1.
 /// </para>
 /// </summary>
 internal readonly record struct Orientation
@@ -41,19 +42,12 @@ internal readonly record struct Orientation
     }
 
     /// <summary>
-    /// The next pose in the given <paramref name="direction"/>, wrapping at
-    /// <see cref="DistinctCount"/>. Counter-clockwise is the exact inverse of
-    /// clockwise, so a turn one way followed by a turn the other returns to the
-    /// same pose. For a one-pose piece (the square) every turn is a no-op.
+    /// The next pose in the single rotation sense, wrapping at
+    /// <see cref="DistinctCount"/>. For a one-pose piece (the square) this is a
+    /// no-op; cycling it repeatedly visits every pose in turn.
     /// </summary>
-    public Orientation Turn(RotationDirection direction)
-    {
-        var step = direction == RotationDirection.Clockwise ? 1 : -1;
-        // Add DistinctCount before the modulo so a backward step from 0 wraps
-        // to the last pose rather than going negative.
-        var next = ((Index + step) % DistinctCount + DistinctCount) % DistinctCount;
-        return new Orientation(DistinctCount, next);
-    }
+    public Orientation Next() =>
+        new(DistinctCount, (Index + 1) % DistinctCount);
 
     public override string ToString() => $"{Index}/{DistinctCount}";
 }

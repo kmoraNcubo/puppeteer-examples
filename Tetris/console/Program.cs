@@ -22,7 +22,7 @@ var well = new Well(width, height, pieces);
 var script = new (string Label, Action<Well> Apply)[]
 {
     ("spawn I",            _ => { }),
-    ("rotate I",           w => w.RotateClockwise()),
+    ("rotate I",           w => w.Rotate()),
     ("slam I left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),
     ("drop I",             w => w.Drop()),
     ("slam O left",        w => { w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); w.MoveLeft(); }),

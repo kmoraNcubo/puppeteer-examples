@@ -35,47 +35,65 @@ a host reaches the verbs by reflection over the assembly.
 | Project | What it is |
 |---|---|
 | [`domain/`](domain/) | The clean DDD model. Immutable value objects + one mutable aggregate root. Only `TetrisDomain` is public. |
-| [`domain.tests/`](domain.tests/) | 41 MSTest cases covering geometry, collision, line clears, invariants, and determinism. |
+| [`domain.tests/`](domain.tests/) | 42 MSTest cases covering geometry, collision, line clears, invariants, determinism, and the game-over contract. |
 | [`console/`](console/) | A pure-domain demo that plays a fixed script and renders the well as ASCII. |
 
 ## The unifying abstraction: figures within figures
 
-Everything occupied in a Tetris well is the same kind of thing — *a set of
-occupied cells in a grid*. A falling piece is such a set. The accumulated pile
-is such a set. And — the decision the whole model turns on — **so is the
-boundary**. The walls and floor are not a special case checked with arithmetic;
-they are a figure of permanently occupied *sentinel* cells, exactly like a piece
-or the pile.
+Everything occupied in a Tetris well is the same kind of thing — *a figure that
+can answer, for any cell, "do you occupy this?"*. A falling piece is such a
+figure. The accumulated pile is such a figure. And — the decision the whole
+model turns on — **so is the boundary**. The walls and floor are not a special
+case checked with bespoke arithmetic; they are a figure exactly like a piece or
+the pile.
 
-That single idea is expressed as the abstract [`Shape`](domain/Shape.cs):
+Membership is the primitive. That single idea is expressed as the abstract
+[`Shape`](domain/Shape.cs):
 
 ```csharp
 internal abstract class Shape
 {
     public abstract ImmutableHashSet<Position> Cells { get; }
-    public bool Occupies(Position p) => Cells.Contains(p);
-    public bool Intersects(Shape other) => Cells.Overlaps(other.Cells);
+    public virtual bool Occupies(Position position) => Cells.Contains(position);
+    public bool Intersects(Shape other) => Cells.Any(other.Occupies);
 }
 ```
+
+`Occupies` is the one thing every figure must answer; `Cells` enumerates the
+extent for figures that have a finite one. `Intersects` iterates **this**
+figure's cells and probes the **other**'s membership — so it costs one
+`Occupies` call per cell of `this`. The convention is to call it as
+`small.Intersects(large)`: in collision the four-cell piece is the small,
+iterated figure (`piece.Intersects(frame)`, `piece.Intersects(pile)`), and the
+boundary is only ever the probed party.
 
 `Piece`, `Pile`, and `Frame` all derive from `Shape`. They are *figures within
 figures*: the well is a figure (the frame) that contains figures (the pile and
 the falling piece).
 
-### The frontier is a figure
+### The frontier is a figure — a boundary *predicate*
 
-`Frame` is the answer to "is the boundary just another shape?" — **yes.** It
-materialises the left wall (column −1), the right wall (column `Width`), and the
-floor (row `Height`) as occupied cells, leaving the ceiling open so pieces can
-spawn in the sky above row 0 and fall in. Because the frontier is a figure, the
-question "did the piece hit a wall?" is not different in kind from "did it hit
-the pile?".
+`Frame` is the answer to "is the boundary just another shape?" — **yes**, but it
+need not enumerate anything. Its walls run as high as a piece can sit, so its
+extent is unbounded; instead of materialising sentinel cells it overrides
+`Occupies` as a closed-form predicate:
+
+```csharp
+public override bool Occupies(Position p) =>
+    p.Column < 0 || p.Column >= Width || p.Row >= Height;
+```
+
+That is: anything left of column 0, at or beyond the width, or at or below the
+floor row is boundary. The **top is open** — a row above 0 is *not* boundary, so
+a piece may sit above the field while it spawns and falls in. Because collision
+only ever *probes* the frame (the four-cell piece does the iterating), the
+boundary never materialises a cell set at all, and `Frame.Cells` is unsupported.
 
 ### One collision rule, not three
 
 Naïve Tetris code has three collision checks: against the left/right walls,
 against the floor, and against the pile. Here there is **one**, because all
-three obstacles are figures:
+three obstacles are figures and membership is the primitive:
 
 ```csharp
 private bool Collides(Piece candidate) =>
@@ -83,9 +101,11 @@ private bool Collides(Piece candidate) =>
 ```
 
 A piece pressing into a wall, a piece resting on the floor, and a piece landing
-on a stack are the same event: the candidate's cells overlap some occupied
-figure. The rule lives once, in [`Well`](domain/Well.cs), and reads like its own
-definition.
+on a stack are the same event: one of the piece's four cells is occupied by some
+figure. Each test is O(4) — four membership probes — and `Intersects` quietly
+benefits from each figure's natural form (the frame as a predicate, the pile as
+an O(1) hash-set lookup) while the one-rule conceptual unity is preserved. The
+rule lives once, in [`Well`](domain/Well.cs), and reads like its own definition.
 
 ## The pieces: polymorphism across the seven tetrominoes
 
@@ -108,14 +128,19 @@ that difference *naturally* rather than with conditionals:
 
 [`Orientation`](domain/Orientation.cs) is a value object that knows its piece's
 `DistinctCount` and cycles `Index` modulo that count, so `O` never leaves pose
-0, `S` toggles 0↔1, and `T` walks 0→1→2→3→0. Rotation is **directional**:
-`Piece.Rotate(RotationDirection)` steps the index forward for `Clockwise` and
-backward for `CounterClockwise`, wrapping at the piece's distinct count, so the
-two directions are exact inverses (turn one way then the other and you are back
-where you started). Rotation is immutable: `Rotate` returns a *new* piece;
-`Translate(offset)` likewise. A piece never mutates and never knows about walls
-or the pile — only about its own shape. The well decides legality; the piece
-only offers candidates.
+0, `S` toggles 0↔1, and `T` walks 0→1→2→3→0. Rotation turns in a **single
+sense**, as in the classic original: `Piece.Rotate()` steps the pose index
+forward by one, wrapping at the piece's distinct count. There is no
+counter-rotation — cycling `Rotate()` repeatedly visits every pose and returns
+to the spawn pose, which is all the original ever offered. For the square,
+`Rotate()` is a valid no-op (one pose): no effect, no error. The four-pose
+pieces' poses are ordered so the single sense matches the classic clockwise
+cycle; the bar and skews simply toggle between their two states (the bar's two
+poses are a *bascula* — a horizontal/vertical rock that need not share a centre,
+encoded directly in the layouts). Rotation is immutable: `Rotate` returns a
+*new* piece; `Translate(offset)` likewise. A piece never mutates and never knows
+about walls or the pile — only about its own shape. The well decides legality;
+the piece only offers candidates.
 
 ## The pile mutates bottom-up
 
@@ -167,21 +192,38 @@ identical state fingerprint.
 
 - `MoveLeft()`, `MoveRight()` — shift the active piece one column and apply it
   **iff** `!Collides(candidate)`; otherwise the move is rejected as a no-op.
-- `Rotate(RotationDirection)`, with `RotateClockwise()` / `RotateCounterClockwise()`
-  convenience verbs — turn the active piece and apply it iff the rotated pose
-  does not collide. There are no wall-kicks (see the trade-off below).
+- `Rotate()` — turn the active piece one step in the single rotation sense and
+  apply it iff the rotated pose does not collide. There are no wall-kicks (see
+  the trade-off below).
 - `Tick()` — descend one row if free; otherwise **land**: integrate the active
   piece into the pile, clear complete rows bottom-up, and draw the next piece.
 - `Drop()` — descend until resting, then land (the hard drop).
 
+**The game-over contract.** Operating on a *finished* game is an invalid request
+and throws `GameOverException` — a caller is expected to check `IsGameOver`
+first. A move that is merely *blocked* (it would collide with a wall or the
+pile) is a different thing entirely: it is valid and simply has no effect — the
+piece stays put and nothing is thrown. So `IsGameOver` is the question you ask
+before acting; a blocked nudge needs no guarding.
+
+**Game-over is derived, not stored.** There is no boolean flag set somewhere and
+hoped to stay in sync. `IsGameOver` is computed: `SpawnRegion.Intersects(Pile)`
+— the game is over exactly when the pile has risen into the small region a new
+piece would be born into (the top two rows across the four spawn columns). The
+spawn region is itself a small figure, so the check is the same membership probe
+as collision. Landing settles the piece, clears rows, and sets `Active = null`,
+then spawns the next piece **only if** `!IsGameOver`; the terminal state is
+reached simply by not spawning — `Active` stays null and the derived
+`IsGameOver` stays true.
+
 Drawing the next piece (`Spawn`) is **not** an external verb — it is `private`,
-triggered only by construction and by landing. Likewise `Collides`, `Land`,
-`TryShift`, `SpawnAnchor`, and `AssertInvariants` are all private; the surface
-is exactly the moves a player can make plus the read members the renderer needs
-(`IsGameOver`, `ClearedLines`, `OccupiedInterior`). A newly spawned piece that
-immediately collides ends the game (`IsGameOver`), after which the verbs are
-inert. A simple `ClearedLines` counter is the only score-like state kept, and it
-stays clean.
+triggered only by construction and by landing, and it fail-fast asserts its
+own precondition (it throws an internal `WellInvariantException` if ever called
+on a finished game). Likewise `Collides`, `Land`, `Shift`, `SpawnAnchor`,
+`SpawnRegion`, and `AssertInvariants` are all private; the surface is exactly
+the moves a player can make plus the read members the renderer needs
+(`IsGameOver`, `ClearedLines`, `OccupiedInterior`). A simple `ClearedLines`
+counter is the only score-like state kept, and it stays clean.
 
 ## Invariants (and where they live)
 
@@ -193,7 +235,7 @@ bug into a loud `WellInvariantException` rather than silent corruption.
 |---|---|
 | A piece has **exactly four** distinct cells | `Piece` constructor → `InvalidPieceException` |
 | An orientation matches its piece's symmetry | `Piece` constructor (pose `DistinctCount` vs piece's count) |
-| There is an active piece **iff** the game is not over | `Well.AssertInvariants()` — `(Active is null) == IsGameOver` |
+| There is an active piece **iff** the game is not over | `Well.AssertInvariants()` — `(Active is null) == IsGameOver`, where `IsGameOver` is *derived* from `SpawnRegion.Intersects(Pile)` |
 | The active piece rests in **free space** | `Well.AssertInvariants()` via the unified `Collides` |
 | Every occupied cell lies **inside the frame** | `Well.AssertInvariants()` via `Frame.Contains` |
 | The pile **never retains a complete row** | `Pile.ClearCompleteRows()` by construction; re-checked in `AssertInvariants()` |
@@ -217,11 +259,20 @@ interior; `|` and `=` draw the frame.
 
 ## Trade-offs and open questions
 
-- **No wall-kicks.** A rotation that would collide is simply rejected. Modern
-  Tetris guidelines (SRS) nudge the piece by small offsets to find a legal pose.
-  That is a clean extension — try a short list of candidate offsets after the
-  rotated pose and accept the first that does not collide — but it adds a kick
-  table that muddies the "one collision rule" story, so it is left out here.
+- **Single-direction rotation, no wall-kicks.** `Rotate()` turns one way, as in
+  the classic original, and a rotation that would collide is simply rejected (a
+  no-op). Modern Tetris adds counter-rotation and SRS wall-kicks (nudge the
+  piece by small offsets to find a legal pose); both are clean extensions but add
+  surface and a kick table that muddy the "one collision rule" story, so they are
+  left out here.
+- **Game-over as "pile reached the spawn region".** `IsGameOver` is derived from
+  the pile intersecting a fixed spawn region, independent of which piece is next.
+  This is faithful and simple; a variant could test the *actual* next piece's
+  spawn pose instead, but that couples game-over to the draw order for no real
+  gain in this spatial model.
+- **Minimum well size.** A well must be at least 4 columns wide and 2 rows tall
+  so a piece's spawn pose fits; the constructor rejects anything smaller. Classic
+  Tetris is 10×20.
 - **Spawn placement.** Pieces spawn with their 4-wide bounding box centred and
   anchored at row 0; the open sky above is interior. A different "spawn in the
   vanish zone above the field" convention is possible but does not change the
@@ -229,7 +280,7 @@ interior; `|` and `=` draw the frame.
 - **`Integrate` takes a `Shape`, not a `Piece`.** The pile cares only about
   cells, not about which kind of figure they came from — the same indifference
   that unifies collision. In play the figure is always the landed piece.
-- **Rotation system.** The layouts follow the common SRS cell positions, but
+- **Rotation layouts.** The layouts follow the common SRS cell positions, but
   with simple pivot-free rotation (each pose is an independent layout). For a
   pure spatial model this is enough; a true SRS pivot is an extension.
 

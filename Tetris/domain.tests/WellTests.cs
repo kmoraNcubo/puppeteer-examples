@@ -1,12 +1,12 @@
-using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Tetris.Tests;
 
 /// <summary>
 /// Behaviour of the aggregate root: guarded moves, landing, line clears driven
-/// through the well, game over, and determinism. Pieces enter through a
-/// scripted source so every scenario is exact and replayable.
+/// through the well, the derived game-over, and the throw-vs-no-op contract.
+/// Pieces enter through a scripted source so every scenario is exact and
+/// replayable.
 /// </summary>
 [TestClass]
 public sealed class WellTests
@@ -35,7 +35,7 @@ public sealed class WellTests
         var well = NarrowWell(4, 10, PieceType.O, PieceType.O);
         var before = well.Active!.Cells;
 
-        well.MoveLeft(); // would push into column -1 (the wall): rejected
+        well.MoveLeft(); // would push into column -1 (the wall): rejected, no throw
 
         Assert.IsTrue(well.Active!.Cells.SetEquals(before), "move into the wall is a no-op");
     }
@@ -58,17 +58,18 @@ public sealed class WellTests
     [TestMethod]
     public void Tick_DescendsUntilTheFloor_ThenLands()
     {
-        // Width 4, height 4. O spawns at rows 0..1. Floor is row 4.
-        var well = NarrowWell(4, 4, PieceType.O, PieceType.O);
+        // Width 4, height 6. O spawns at rows 0..1. Floor is row 6.
+        var well = NarrowWell(4, 6, PieceType.O, PieceType.O);
 
-        // Tick down: rows 0..1 -> 1..2 -> 2..3. Next tick would hit the floor (row 4).
         well.Tick(); // -> rows 1..2
         well.Tick(); // -> rows 2..3
-        Assert.IsTrue(well.Active!.Occupies(new Position(3, 0)), "resting on the floor line");
+        well.Tick(); // -> rows 3..4
+        well.Tick(); // -> rows 4..5
+        Assert.IsTrue(well.Active!.Occupies(new Position(5, 0)), "resting on the floor line");
 
         well.Tick(); // lands; the next O spawns
-        Assert.IsTrue(well.Pile.Occupies(new Position(3, 0)), "landed cell joined the pile");
-        Assert.IsTrue(well.Pile.Occupies(new Position(2, 1)));
+        Assert.IsTrue(well.Pile.Occupies(new Position(5, 0)), "landed cell joined the pile");
+        Assert.IsTrue(well.Pile.Occupies(new Position(4, 1)));
         Assert.AreEqual(PieceType.O, well.Active!.Type, "the next piece is active");
         Assert.IsTrue(well.Active.Occupies(new Position(0, 0)), "next piece spawned at the top");
     }
@@ -90,16 +91,16 @@ public sealed class WellTests
     [TestMethod]
     public void Landing_IntegratesThePieceIntoThePile()
     {
-        // Height 4: floor at row 4. An O spawning at rows 0..1 falls until its
-        // bottom rests on row 3 (just above the floor) — landing cells rows 2..3.
-        var well = NarrowWell(4, 4, PieceType.O, PieceType.O);
+        // Height 6: floor at row 6. An O falls until its bottom rests on row 5 —
+        // landing cells rows 4..5.
+        var well = NarrowWell(4, 6, PieceType.O, PieceType.O);
 
         well.Drop();
 
         foreach (var cell in new[]
                  {
-                     new Position(2, 0), new Position(2, 1),
-                     new Position(3, 0), new Position(3, 1),
+                     new Position(4, 0), new Position(4, 1),
+                     new Position(5, 0), new Position(5, 1),
                  })
         {
             Assert.IsTrue(well.Pile.Occupies(cell), $"pile should contain {cell}");
@@ -107,38 +108,18 @@ public sealed class WellTests
     }
 
     [TestMethod]
-    public void Rotate_IsAllowedInOpenSpace_AndTogglesThePose()
+    public void Rotate_IsAllowedInOpenSpace_AndCyclesThePose()
     {
         // Width 4, height 8. An I-piece spawns horizontal across columns 0..3
-        // (row 1). Rotating to vertical sweeps column 2 across rows 0..3, which
-        // is open, so the rotation is accepted; rotating back is accepted too.
+        // (row 1). Rotating sweeps column 2 across rows 0..3, which is open, so
+        // the rotation is accepted; rotating again cycles it back (2 poses).
         var well = NarrowWell(4, 8, PieceType.I, PieceType.I);
 
         Assert.AreEqual(0, well.Active!.Orientation.Index, "spawns horizontal");
-        well.RotateClockwise();
+        well.Rotate();
         Assert.AreEqual(1, well.Active!.Orientation.Index, "rotates to vertical in open space");
-        well.RotateClockwise();
-        Assert.AreEqual(0, well.Active!.Orientation.Index, "toggles back to horizontal");
-    }
-
-    [TestMethod]
-    public void RotateCounterClockwise_ReversesClockwise_ThroughTheWell()
-    {
-        // Width 6, height 8 so a tee has room to turn freely. The tee cycles
-        // 0->1->2->3 clockwise; counter-clockwise must walk it back the same way.
-        var well = NarrowWell(6, 8, PieceType.T, PieceType.T);
-
-        well.RotateClockwise();
-        Assert.AreEqual(1, well.Active!.Orientation.Index);
-        well.RotateClockwise();
-        Assert.AreEqual(2, well.Active!.Orientation.Index);
-
-        well.RotateCounterClockwise();
-        Assert.AreEqual(1, well.Active!.Orientation.Index, "counter-clockwise steps back");
-        well.RotateCounterClockwise();
-        Assert.AreEqual(0, well.Active!.Orientation.Index);
-        well.RotateCounterClockwise();
-        Assert.AreEqual(3, well.Active!.Orientation.Index, "wraps below zero to the last pose");
+        well.Rotate();
+        Assert.AreEqual(0, well.Active!.Orientation.Index, "cycles back to horizontal");
     }
 
     [TestMethod]
@@ -146,17 +127,17 @@ public sealed class WellTests
     {
         // Width 4, height 8. The I-piece spawns horizontal (cols 0..3, row 1).
         // Turn it vertical (column 2), then shove it to the left wall. Turning
-        // it back to horizontal there would sweep columns -2..1 — across the
-        // left wall — so the rotation must be rejected.
+        // it again (back to horizontal) there would sweep columns -2..1 — across
+        // the left wall — so the rotation must be rejected as a no-op.
         var well = NarrowWell(4, 8, PieceType.I, PieceType.I);
 
-        well.RotateClockwise();   // -> vertical, column 2
+        well.Rotate();            // -> vertical, column 2
         well.MoveLeft();          // -> column 1
         well.MoveLeft();          // -> column 0 (against the left wall)
         Assert.IsTrue(well.Active!.Occupies(new Position(0, 0)), "vertical bar at the left wall");
 
         var before = well.Active!.Cells;
-        well.RotateCounterClockwise(); // back to horizontal would cross the wall
+        well.Rotate(); // back to horizontal would cross the wall: rejected, no throw
         Assert.IsTrue(well.Active!.Cells.SetEquals(before), "rotation into the wall rejected");
         Assert.AreEqual(1, well.Active!.Orientation.Index, "still vertical");
     }
@@ -167,12 +148,9 @@ public sealed class WellTests
         // Width 4, height 8. Build a two-cell-tall pile under the right half so
         // that an I-piece, rotated to vertical against it, would overlap.
         //
-        // Plan: drop an O to the floor, then shove it right so it rests at
-        // columns 2..3, rows 6..7. Then take a horizontal I (cols 0..3, row 1),
-        // tick it down to sit at row 5 (just above the O at rows 6..7 in cols
-        // 2..3), and attempt to rotate to vertical. Vertical-I cells would be
-        // column 2 across rows 4..7 — rows 6 and 7 in column 2 are occupied by
-        // the O, so the rotation must be rejected.
+        // Drop an O shoved right (rests rows 6..7, cols 2..3). Tick a horizontal
+        // I down to row 5; rotating to vertical would sweep column 2 across rows
+        // 4..7 — rows 6,7 there are filled — so the rotation is rejected.
         var well = NarrowWell(4, 8, PieceType.O, PieceType.I, PieceType.O);
 
         well.MoveRight();
@@ -182,11 +160,6 @@ public sealed class WellTests
         Assert.IsTrue(well.Pile.Occupies(new Position(6, 2)));
         Assert.IsTrue(well.Pile.Occupies(new Position(7, 3)));
 
-        // I is now active, horizontal at row 1 cols 0..3. Tick it down to row 5
-        // (cells (5,0..3)). The next tick down would put a cell at row 6 col 2/3?
-        // No — horizontal I spans all columns at one row; descending to row 6
-        // would overlap the O at (6,2)(6,3), so it lands at row 5 if we let it.
-        // We instead stop one tick early and rotate there.
         for (var i = 0; i < 4; i++) // rows 1 -> 5
         {
             well.Tick();
@@ -195,7 +168,7 @@ public sealed class WellTests
         Assert.IsTrue(well.Active!.Occupies(new Position(5, 2)), "I rests at row 5");
 
         var beforeRotate = well.Active!.Cells;
-        well.RotateClockwise(); // vertical would be column 2 rows 4..7; rows 6,7 are filled
+        well.Rotate(); // vertical would be column 2 rows 4..7; rows 6,7 are filled
         Assert.IsTrue(well.Active!.Cells.SetEquals(beforeRotate), "rotation into the pile rejected");
         Assert.AreEqual(0, well.Active!.Orientation.Index, "still horizontal");
     }
@@ -203,13 +176,11 @@ public sealed class WellTests
     [TestMethod]
     public void Tick_ClearsACompleteRow_ThroughTheWell()
     {
-        // Width 4. Two O pieces side by side fill a 2-wide-by-2-tall block;
-        // that is not a full row. Instead use I pieces: a horizontal I fills
-        // all 4 columns of one row. Stack two horizontal I's to fill two rows.
+        // Width 4. A horizontal I fills all 4 columns of one row. Stack two to
+        // clear the floor row twice.
         var well = NarrowWell(4, 6, PieceType.I, PieceType.I, PieceType.O);
 
-        well.Drop(); // I rests on floor: horizontal across row 5 (cols 0..3) — a full row!
-        // It clears immediately on landing.
+        well.Drop(); // I rests on the floor: horizontal across row 5 — a full row, clears at once
         Assert.AreEqual(1, well.ClearedLines, "the full floor row cleared");
         Assert.IsTrue(well.Pile.CompleteRows().IsEmpty);
         Assert.AreEqual(0, well.Pile.Cells.Count, "pile is empty after the clear");
@@ -220,27 +191,14 @@ public sealed class WellTests
     }
 
     [TestMethod]
-    public void LineClear_ThroughWell_DropsAStackedBlockOneRowLower()
+    public void LineClear_ThroughWell_DropsAStackedBlockLower()
     {
-        // Width 4, height 6.
-        // Plan: fill the bottom row with an I (clears), but first park a single
-        // O on top so that after the clear it ends one row lower.
-        // Simpler deterministic plan: drop an O to the left, then an I that
-        // completes... but O occupies 2 columns, the I would overlap. Instead:
-        // Use width 4 and pieces that compose cleanly.
-        //
-        // Step 1: O dropped to the floor occupies cols 0..1, rows 4..5.
-        // Step 2: O dropped occupies cols 2..3, rows 4..5 — together rows 4 and 5
-        //         are BOTH full across all 4 columns -> two rows clear at once.
-        // That leaves an empty pile, not a "stacked block" case. To get a
-        // survivor, add a third O on top of the first before the second lands.
-        //
-        // Deterministic survivor scenario:
+        // Width 4, height 6. Survivor scenario:
         //   - O #1 -> floor left  (cols 0..1, rows 4..5)
         //   - O #2 stacked on #1  (cols 0..1, rows 2..3)
         //   - O #3 -> floor right (cols 2..3, rows 4..5) completes rows 4 and 5
-        // Result: rows 4 and 5 clear; the surviving block (rows 2..3, cols 0..1)
-        // drops by two -> rows 4..5.
+        // Rows 4 and 5 clear; the surviving block (rows 2..3, cols 0..1) drops by
+        // two -> rows 4..5.
         var well = NarrowWell(4, 6, PieceType.O, PieceType.O, PieceType.O, PieceType.O);
 
         well.Drop();                 // O#1 -> rows 4..5, cols 0..1
@@ -260,38 +218,64 @@ public sealed class WellTests
     }
 
     [TestMethod]
-    public void GameOver_WhenAFreshlySpawnedPieceImmediatelyCollides()
+    public void IsGameOver_FlipsWhenThePileRisesIntoTheSpawnRegion()
     {
-        // Width 4, height 2 — a very shallow well. Stack O pieces until a fresh
-        // spawn has nowhere to go.
-        var well = NarrowWell(4, 2,
-            PieceType.O, // #1
-            PieceType.O, // #2 should not fit -> game over on its spawn
-            PieceType.O);
+        // Width 4, height 2 — a shallow well. The spawn region is rows 0..1,
+        // columns 0..3. An O dropped onto the floor (rows 0..1, cols 0..1) lands
+        // straight into the spawn region, so the derived game-over flips.
+        var well = NarrowWell(4, 2, PieceType.O, PieceType.O);
 
-        // O#1 spawns at rows 0..1 (the whole height). Drop it: rests on floor
-        // rows 0..1 (height 2 -> floor at row 2). It fills rows 0..1 cols 0..1.
-        well.Drop();
+        Assert.IsFalse(well.IsGameOver, "play opens normally");
+        Assert.IsNotNull(well.Active);
 
-        // Spawning O#2 at rows 0..1 cols 0..1 now overlaps the pile -> game over.
-        Assert.IsTrue(well.IsGameOver, "no room for the next piece");
+        well.Drop(); // O fills rows 0..1, cols 0..1 — inside the spawn region
+
+        Assert.IsTrue(well.IsGameOver, "pile has risen into the spawn region");
         Assert.IsNull(well.Active, "no active piece once the game is over");
-
-        // Verbs are inert after game over.
-        well.MoveLeft();
-        well.Tick();
-        well.RotateClockwise();
-        Assert.IsTrue(well.IsGameOver);
     }
 
     [TestMethod]
-    public void GameOver_OnOpen_WhenTheVeryFirstPieceCannotAppear()
+    public void EveryVerb_ThrowsOnAFinishedGame_AndLeavesTheWellUnchanged()
     {
-        // Height 1, width 4. O needs 2 rows; its spawn cells reach row 1 = floor.
-        var well = NarrowWell(4, 1, PieceType.O);
+        var well = NarrowWell(4, 2, PieceType.O, PieceType.O);
+        well.Drop(); // reach game over
+        Assert.IsTrue(well.IsGameOver);
 
-        Assert.IsTrue(well.IsGameOver, "the first piece collides with the floor on spawn");
-        Assert.IsNull(well.Active);
+        // Snapshot the full state before each invalid operation.
+        var pileBefore = well.Pile.Cells;
+        var clearedBefore = well.ClearedLines;
+
+        AssertVerbThrowsAndStateUnchanged(well, w => w.MoveLeft(), pileBefore, clearedBefore);
+        AssertVerbThrowsAndStateUnchanged(well, w => w.MoveRight(), pileBefore, clearedBefore);
+        AssertVerbThrowsAndStateUnchanged(well, w => w.Rotate(), pileBefore, clearedBefore);
+        AssertVerbThrowsAndStateUnchanged(well, w => w.Tick(), pileBefore, clearedBefore);
+        AssertVerbThrowsAndStateUnchanged(well, w => w.Drop(), pileBefore, clearedBefore);
+    }
+
+    private static void AssertVerbThrowsAndStateUnchanged(
+        Well well, System.Action<Well> verb,
+        System.Collections.Immutable.ImmutableHashSet<Position> pileBefore, int clearedBefore)
+    {
+        Assert.ThrowsException<GameOverException>(() => verb(well));
+
+        Assert.IsTrue(well.IsGameOver, "still game over");
+        Assert.IsNull(well.Active, "still no active piece");
+        Assert.IsTrue(well.Pile.Cells.SetEquals(pileBefore), "pile unchanged by the failed verb");
+        Assert.AreEqual(clearedBefore, well.ClearedLines, "cleared count unchanged by the failed verb");
+    }
+
+    [TestMethod]
+    public void BlockedMove_IsANoOp_NotAThrow()
+    {
+        // A move blocked by a wall is a valid no-op: the piece stays and nothing
+        // is thrown. (Contrast with operating on a finished game, which throws.)
+        var well = NarrowWell(4, 10, PieceType.O, PieceType.O);
+        var before = well.Active!.Cells;
+
+        well.MoveLeft(); // against the left wall
+
+        Assert.IsTrue(well.Active!.Cells.SetEquals(before), "blocked move left the piece in place");
+        Assert.IsFalse(well.IsGameOver);
     }
 
     [TestMethod]
@@ -304,9 +288,31 @@ public sealed class WellTests
 
         // …and once the game is over there is none. (The invariant is also
         // checked inside the well after every transition.)
-        var over = NarrowWell(4, 1, PieceType.O);
+        var over = NarrowWell(4, 2, PieceType.O, PieceType.O);
+        over.Drop();
         Assert.IsTrue(over.IsGameOver);
         Assert.IsNull(over.Active);
+    }
+
+    [TestMethod]
+    public void Collision_RejectsWallFloorAndPile_WithTheFramePredicate()
+    {
+        // The frame is a boundary predicate, not a cell set; collision still
+        // catches all three cases through the same membership probe.
+        var well = NarrowWell(6, 6, PieceType.O, PieceType.O, PieceType.O);
+
+        // Left wall: spawn at cols 1..2 (anchor (6-4)/2 = 1), shove left to the wall.
+        well.MoveLeft(); // cols 0..1, against the wall
+        var atWall = well.Active!.Cells;
+        well.MoveLeft(); // blocked by the wall predicate
+        Assert.IsTrue(well.Active!.Cells.SetEquals(atWall), "left wall blocks");
+
+        // Floor + pile: drop to the floor (cols 0..1, rows 4..5), then a second
+        // O — which spawns at cols 1..2 — stacks where it meets the pile.
+        well.Drop(); // rests on the floor (frame predicate stopped it)
+        Assert.IsTrue(well.Pile.Occupies(new Position(5, 0)), "stopped by the floor");
+        well.Drop(); // second O (cols 1..2) stops on the pile under column 1
+        Assert.IsTrue(well.Pile.Occupies(new Position(3, 1)), "stopped by the pile");
     }
 
     [TestMethod]
@@ -319,5 +325,14 @@ public sealed class WellTests
         Assert.IsFalse(well.IsGameOver);
         Assert.IsNotNull(well.Active);
         CollectionAssert.Contains(System.Enum.GetValues<PieceType>(), well.Active!.Type);
+    }
+
+    [TestMethod]
+    public void Constructor_RejectsAWellTooSmallToAdmitAPiece()
+    {
+        Assert.ThrowsException<System.ArgumentOutOfRangeException>(
+            () => new Well(3, 10, new ScriptedPieceSource(PieceType.O)));
+        Assert.ThrowsException<System.ArgumentOutOfRangeException>(
+            () => new Well(4, 1, new ScriptedPieceSource(PieceType.O)));
     }
 }

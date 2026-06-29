@@ -5,8 +5,8 @@ namespace Tetris;
 
 /// <summary>
 /// The board — the aggregate root and the one mutable thing in the model. A
-/// well composes three immutable figures: the boundary <see cref="Frame"/>,
-/// the accumulated <see cref="Pile"/>, and the falling active <see cref="Piece"/>.
+/// well composes three figures: the boundary <see cref="Frame"/>, the
+/// accumulated <see cref="Pile"/>, and the falling active <see cref="Piece"/>.
 /// <para>
 /// The well is deterministic: the same construction, fed the same piece
 /// sequence and driven by the same sequence of verbs, always reaches the same
@@ -17,11 +17,11 @@ namespace Tetris;
 /// reproducible from the outside.
 /// </para>
 /// <para>
-/// The well owns the invariants: there is an active falling piece exactly when
-/// the game is not over, the active piece always rests in free space, every
-/// occupied cell lies inside the frame, and the pile never keeps a complete
-/// row. It enforces them after every transition with
-/// <see cref="AssertInvariants"/>.
+/// Contract for the move verbs: operating on a finished game is invalid and
+/// throws <see cref="GameOverException"/> — a caller is expected to check
+/// <see cref="IsGameOver"/> first. A move that is merely <em>blocked</em> (it
+/// would collide with a wall or the pile) is a valid no-op: the piece stays put
+/// and nothing is thrown.
 /// </para>
 /// </summary>
 internal sealed class Well
@@ -34,9 +34,6 @@ internal sealed class Well
 
     /// <summary>The tetromino currently falling, or <c>null</c> once the game is over.</summary>
     internal Piece? Active { get; private set; }
-
-    /// <summary>True once a freshly spawned piece had nowhere legal to appear.</summary>
-    internal bool IsGameOver { get; private set; }
 
     /// <summary>How many rows have been cleared over the well's lifetime.</summary>
     internal int ClearedLines { get; private set; }
@@ -54,51 +51,91 @@ internal sealed class Well
     /// <summary>
     /// Opens a well of the given interior size, drawing its pieces from
     /// <paramref name="pieces"/>. Supplying a source makes the game
-    /// reproducible. If the first piece cannot even appear, the well opens
-    /// already game-over.
+    /// reproducible.
     /// </summary>
     internal Well(int width, int height, IPieceSource pieces)
     {
+        if (width < 4)
+        {
+            throw new System.ArgumentOutOfRangeException(
+                nameof(width), width, "A well must be at least 4 columns wide to admit a piece.");
+        }
+
+        if (height < 2)
+        {
+            throw new System.ArgumentOutOfRangeException(
+                nameof(height), height, "A well must be at least 2 rows tall to admit a piece.");
+        }
+
         Frame = new Frame(width, height);
         Pile = Pile.Empty(width);
         _pieces = pieces;
 
-        Spawn();
+        if (!IsGameOver)
+        {
+            Spawn();
+        }
+
         AssertInvariants();
     }
 
-    /// <summary>The column anchor that centres a 4-wide bounding box.</summary>
+    /// <summary>
+    /// Whether the game has ended — <em>derived</em>, not stored. The game is
+    /// over exactly when the pile has risen into the <see cref="SpawnRegion"/>,
+    /// so a freshly drawn piece would have nowhere clear to appear. The small
+    /// spawn region iterates and probes the pile's O(1) membership.
+    /// </summary>
+    internal bool IsGameOver => SpawnRegion.Intersects(Pile);
+
+    /// <summary>The top-left corner of the 4-wide spawn bounding box.</summary>
     private Position SpawnAnchor => new(0, (Frame.Width - 4) / 2);
 
     /// <summary>
+    /// The cells a freshly spawned piece is born into: the top two rows across
+    /// the four spawn columns. Every tetromino's spawn pose lies within this
+    /// box, so if the pile reaches any of these cells the next piece cannot
+    /// appear — that is game over.
+    /// </summary>
+    private Shape SpawnRegion
+    {
+        get
+        {
+            var anchorColumn = SpawnAnchor.Column;
+            var cells =
+                from row in Enumerable.Range(0, 2)
+                from column in Enumerable.Range(anchorColumn, 4)
+                select new Position(row, column);
+            return new CellSet(cells.ToImmutableHashSet());
+        }
+    }
+
+    /// <summary>
     /// The single legality rule. A candidate placement is legal iff its cells
-    /// do not overlap the union of the boundary and the pile. Because the
-    /// frame is itself a figure, wall-, floor- and pile-collision are this one
-    /// <see cref="Shape.Intersects"/> test, not three special cases.
+    /// overlap neither the boundary nor the pile. Because the frame is itself a
+    /// figure, wall-, floor- and pile-collision are this one
+    /// <see cref="Shape.Intersects"/> test, not three special cases. The
+    /// four-cell piece is the small figure that iterates; the frame and pile are
+    /// only probed.
     /// </summary>
     private bool Collides(Piece candidate) =>
         candidate.Intersects(Frame) || candidate.Intersects(Pile);
 
-    /// <summary>Slides the active piece one column left, unless that would collide.</summary>
-    internal void MoveLeft() => TryShift(Offset.Left);
+    /// <summary>Slides the active piece one column left; a blocked slide is a no-op.</summary>
+    internal void MoveLeft() => Shift(Offset.Left);
 
-    /// <summary>Slides the active piece one column right, unless that would collide.</summary>
-    internal void MoveRight() => TryShift(Offset.Right);
+    /// <summary>Slides the active piece one column right; a blocked slide is a no-op.</summary>
+    internal void MoveRight() => Shift(Offset.Right);
 
     /// <summary>
-    /// Rotates the active piece one quarter-turn in the given direction, unless
-    /// the rotated pose would collide with a wall or the pile, in which case the
-    /// turn is rejected. No wall-kicks: a blocked rotation is simply rejected
-    /// (see the README for this trade-off).
+    /// Rotates the active piece one quarter-turn in the single rotation sense. A
+    /// rotation that would collide with a wall or the pile is rejected as a
+    /// no-op (no wall-kicks; see the README). Throws if the game is over.
     /// </summary>
-    internal void Rotate(RotationDirection direction)
+    internal void Rotate()
     {
-        if (Active is null)
-        {
-            return;
-        }
+        RequireInPlay();
 
-        var candidate = Active.Rotate(direction);
+        var candidate = Active!.Rotate();
         if (!Collides(candidate))
         {
             Active = candidate;
@@ -107,26 +144,15 @@ internal sealed class Well
         AssertInvariants();
     }
 
-    /// <summary>Rotates the active piece a quarter-turn clockwise.</summary>
-    internal void RotateClockwise() => Rotate(RotationDirection.Clockwise);
-
-    /// <summary>Rotates the active piece a quarter-turn counter-clockwise.</summary>
-    internal void RotateCounterClockwise() => Rotate(RotationDirection.CounterClockwise);
-
     /// <summary>
     /// Advances the world by one step. If the active piece can descend a row it
-    /// does; otherwise it <em>lands</em> — its cells join the pile, complete
-    /// rows clear bottom-up, and the next piece is drawn. A newly drawn piece
-    /// that immediately collides ends the game.
+    /// does; otherwise it <em>lands</em>. Throws if the game is over.
     /// </summary>
     internal void Tick()
     {
-        if (Active is null)
-        {
-            return;
-        }
+        RequireInPlay();
 
-        var descended = Active.Translate(Offset.Down);
+        var descended = Active!.Translate(Offset.Down);
         if (!Collides(descended))
         {
             Active = descended;
@@ -139,16 +165,13 @@ internal sealed class Well
 
     /// <summary>
     /// Drops the active piece straight down until it rests, then lands it — the
-    /// hard drop. Equivalent to ticking until the piece can fall no further.
+    /// hard drop. Throws if the game is over.
     /// </summary>
     internal void Drop()
     {
-        if (Active is null)
-        {
-            return;
-        }
+        RequireInPlay();
 
-        var resting = Active;
+        var resting = Active!;
         while (!Collides(resting.Translate(Offset.Down)))
         {
             resting = resting.Translate(Offset.Down);
@@ -158,20 +181,27 @@ internal sealed class Well
         Land();
     }
 
-    private void TryShift(Offset offset)
+    private void Shift(Offset offset)
     {
-        if (Active is null)
-        {
-            return;
-        }
+        RequireInPlay();
 
-        var candidate = Active.Translate(offset);
+        var candidate = Active!.Translate(offset);
         if (!Collides(candidate))
         {
             Active = candidate;
         }
 
         AssertInvariants();
+    }
+
+    /// <summary>Guards the move verbs: a finished game cannot be operated on.</summary>
+    private void RequireInPlay()
+    {
+        if (IsGameOver)
+        {
+            throw new GameOverException(
+                "The game is over; check IsGameOver before operating on the well.");
+        }
     }
 
     private void Land()
@@ -186,23 +216,31 @@ internal sealed class Well
             ClearedLines += cleared;
         }
 
-        Spawn();
+        // The piece has settled. Validate before bringing in the next one: if
+        // the pile now reaches the spawn region the game is over and we simply
+        // do not spawn — Active stays null and IsGameOver (derived) stays true.
+        Active = null;
+        if (!IsGameOver)
+        {
+            Spawn();
+        }
+
         AssertInvariants();
     }
 
+    /// <summary>
+    /// Places the next piece at the spawn anchor. Precondition: the game is not
+    /// over (the spawn region is clear). Calling this on a finished game is an
+    /// internal bug, distinct from the caller-facing <see cref="GameOverException"/>.
+    /// </summary>
     private void Spawn()
     {
-        var next = Tetromino.Spawn(_pieces.Next(), SpawnAnchor);
-        if (Collides(next))
+        if (IsGameOver)
         {
-            // The new piece has nowhere legal to appear: the pile has reached
-            // the ceiling. The game is over and there is no active piece.
-            Active = null;
-            IsGameOver = true;
-            return;
+            throw new WellInvariantException("Spawn was called on a finished game.");
         }
 
-        Active = next;
+        Active = Tetromino.Spawn(_pieces.Next(), SpawnAnchor);
     }
 
     /// <summary>
@@ -213,8 +251,7 @@ internal sealed class Well
     /// </summary>
     private void AssertInvariants()
     {
-        // There is an active falling piece exactly when the game is not over:
-        // a new piece is created whenever play continues.
+        // There is an active falling piece exactly when the game is not over.
         if ((Active is null) != IsGameOver)
         {
             throw new WellInvariantException(
@@ -273,5 +310,16 @@ internal sealed class Well
         }
 
         return occupied.Where(Frame.Contains).ToImmutableHashSet();
+    }
+
+    /// <summary>
+    /// A bare set of cells as a <see cref="Shape"/> — used for the spawn region,
+    /// which is just a handful of cells with no behaviour of its own.
+    /// </summary>
+    private sealed class CellSet : Shape
+    {
+        public CellSet(ImmutableHashSet<Position> cells) => Cells = cells;
+
+        public override ImmutableHashSet<Position> Cells { get; }
     }
 }
