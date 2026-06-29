@@ -276,10 +276,19 @@ dotnet run --project console/TetrisConsole.csproj
 ```
 
 The domain has no Puppeteer dependency, so it builds standalone; the test
-project uses MSTest from nuget.org. The console demo plays a fixed scripted
-sequence and prints the well after each step — deterministic, so it renders the
-same frames every run. `@` is the falling piece, `#` a landed block, `.` empty
-interior; `|` and `=` draw the frame.
+project uses MSTest from nuget.org.
+
+The console is an **interactive, keyboard-driven** game — the "console
+monolith". It references only the domain and drives the `Well` directly, with
+the host supplying everything the domain externalizes: the keyboard (inbound
+commands), the clock (a ~500 ms gravity `Tick`), the randomness (a
+`System.Random` choosing which piece to `Spawn` — the exact seam a Puppeteer
+reaction will later fill), and the rendering. It honours the query-first
+contract by construction: it inspects `IsGameOver` / `IsAwaitingPiece` /
+`Active` before every operation and never catches `TetrisRuleException`.
+Controls: ←/→ move, ↑ rotate, ↓ soft drop, Space hard drop, Q/Esc quit.
+`dotnet run --project console/TetrisConsole.csproj -- --auto` self-plays random
+moves for a few seconds as a headless rendering smoke-test.
 
 ## Trade-offs and open questions
 
