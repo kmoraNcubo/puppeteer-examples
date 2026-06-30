@@ -13,9 +13,27 @@ namespace Tetris.Acting;
 public static class SessionPaths
 {
     /// <summary>The root under which every session's journal directory lives.</summary>
-    public static string Root { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "tetris-sessions");
+    public static string Root { get; } = ComputeRoot();
+
+    // Sessions live INSIDE the repo (a ".sessions" folder beside Tetris.sln),
+    // not in LocalApplicationData. The journal + live frame file must be visible
+    // to a viewer running in a DIFFERENT environment that shares only the repo
+    // directory (e.g. a remote/sandboxed session whose workspace is the repo but
+    // whose AppData is a separate filesystem from the user's terminal). The repo
+    // is the one path both sides see; AppData is not. Found by walking up from the
+    // running exe to the directory that holds Tetris.sln, so every project
+    // (ai / watch / observer / console) resolves the same root.
+    private static string ComputeRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Tetris.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        var baseDir = dir?.FullName ?? AppContext.BaseDirectory;
+        return Path.Combine(baseDir, ".sessions");
+    }
 
     /// <summary>The journal directory for <paramref name="session"/> (one subdirectory per id).</summary>
     public static string For(string session) => Path.Combine(Root, Safe(session));
