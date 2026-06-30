@@ -21,18 +21,47 @@ namespace Tetris.Acting;
 /// </summary>
 public sealed class TetrisActor : IDisposable
 {
+    // Check guards (the GENTLE preconditions). PerformCheckThenCommand enacts the
+    // command only when the Check condition is true and otherwise leaves state
+    // untouched — so in normal play the domain's hard TetrisRuleException is never
+    // reached; the domain invariant stays the backstop. "A piece is active" is
+    // exactly "not over and not awaiting"; "can spawn" is "awaiting a piece".
+    private const string ActivePieceCheck =
+        "{ Check(well.IsGameOver == false && well.IsAwaitingPiece == false) WARNING 'no active piece'; }";
+    private const string AwaitingPieceCheck =
+        "{ Check(well.IsAwaitingPiece == true) WARNING 'not awaiting a piece'; }";
+
     private readonly PerformanceV2 performance;
 
+    /// <summary>
+    /// Opens an in-memory session (state lost on process exit). This is the ctor
+    /// the human console uses.
+    /// </summary>
     public TetrisActor(string actorName, int width, int height)
+        : this(actorName, width, height, DatabaseType.IN_MEMORY, "InMemory")
+    {
+    }
+
+    /// <summary>
+    /// Opens a session backed by a persistent FileSystem journal at
+    /// <paramref name="journalDirectory"/>. State survives across process exits:
+    /// a later <see cref="TetrisActor"/> on the same directory rehydrates by
+    /// replaying the journal. Used by the per-op AI CLI and the observer.
+    /// </summary>
+    public static TetrisActor Persistent(string actorName, int width, int height, string journalDirectory) =>
+        new(actorName, width, height, DatabaseType.FileSystem, $"path={journalDirectory};maxFileSize=4194304");
+
+    private TetrisActor(string actorName, int width, int height, DatabaseType storage, string connectionString)
     {
         // The framework discovers the domain (Well, Piece, …) by reflection over
         // this assembly; only the public anchor TetrisDomain is needed as the seam.
         performance = new PerformanceV2(actorName, typeof(TetrisDomain).Assembly)
-            .ConfigureStorage(DatabaseType.IN_MEMORY, "InMemory")
+            .ConfigureStorage(storage, connectionString)
             .Start();
 
         // Seed the aggregate into actor state. 'upgrade' runs its body once and
-        // is recognised as already-applied on every later rehydration.
+        // is recognised as already-applied on every later rehydration — so a
+        // persistent session that already has a 'seed' entry keeps its well.
         performance.Using($"upgrade('seed') {{ well = Well({width}, {height}); }}").PerformCommand();
     }
 
@@ -64,25 +93,32 @@ public sealed class TetrisActor : IDisposable
         // returns one of "I,O,T,S,Z,J,L".
         var letter = QueryString("print well.NextPieceLetter() letter;", "letter");
 
-        // Literal command — the journal records well.Spawn('T'); the engine
-        // coerces the string to the PieceType enum by member name.
-        performance.Using($"well.Spawn('{letter}');").PerformCommand();
+        // Check-then-command: spawn only when the well is awaiting a piece. The
+        // journal records well.Spawn('T'); the engine coerces the string to the
+        // PieceType enum by member name.
+        performance.Using(AwaitingPieceCheck, $"well.Spawn('{letter}');").PerformCheckThenCommand();
     }
 
     /// <summary>Slides the active piece one column left (a blocked slide is a no-op).</summary>
-    public void MoveLeft() => performance.Using("well.MoveLeft();").PerformCommand();
+    public void MoveLeft() => GuardedVerb("well.MoveLeft();");
 
     /// <summary>Slides the active piece one column right (a blocked slide is a no-op).</summary>
-    public void MoveRight() => performance.Using("well.MoveRight();").PerformCommand();
+    public void MoveRight() => GuardedVerb("well.MoveRight();");
 
     /// <summary>Rotates the active piece one step (a blocked rotation is a no-op).</summary>
-    public void Rotate() => performance.Using("well.Rotate();").PerformCommand();
+    public void Rotate() => GuardedVerb("well.Rotate();");
 
     /// <summary>Advances the active piece one row; lands it if it cannot descend.</summary>
-    public void Tick() => performance.Using("well.Tick();").PerformCommand();
+    public void Tick() => GuardedVerb("well.Tick();");
 
     /// <summary>Hard-drops the active piece to its resting place and lands it.</summary>
-    public void Drop() => performance.Using("well.Drop();").PerformCommand();
+    public void Drop() => GuardedVerb("well.Drop();");
+
+    // Every move verb is check-guarded by the active-piece precondition, so the
+    // command runs only while a piece is falling; otherwise it is a clean no-op
+    // (state untouched) and the domain's hard guard is never tripped.
+    private void GuardedVerb(string command) =>
+        performance.Using(ActivePieceCheck, command).PerformCheckThenCommand();
 
     // ── Typed read for rendering + control flow ────────────────────────────
 
@@ -96,12 +132,19 @@ public sealed class TetrisActor : IDisposable
         var occupied = QueryCells("well.OccupiedInterior()");
 
         // OccupiedInterior already includes the falling piece, so a host can
-        // render entirely from it. The separate active-cells list is offered for
-        // convenience and is queried only when a piece is actually falling
-        // (query-first: never touch well.Active while awaiting / over).
-        var active = (scalars.IsGameOver || scalars.IsAwaitingPiece)
-            ? (IReadOnlyList<Cell>)Array.Empty<Cell>()
-            : QueryCells("well.Active.Cells");
+        // render entirely from it. The active piece's cells and TYPE are queried
+        // only when a piece is actually falling (query-first: never touch
+        // well.Active while awaiting / over).
+        var hasActive = !scalars.IsGameOver && !scalars.IsAwaitingPiece;
+        var active = hasActive
+            ? QueryCells("well.Active.Cells")
+            : (IReadOnlyList<Cell>)Array.Empty<Cell>();
+
+        // The active piece's PieceType, rendered by the formatter as its member
+        // name (e.g. "T"); null when there is no falling piece.
+        var activeType = hasActive
+            ? QueryString("print well.Active.Type t;", "t")
+            : null;
 
         return new WellSnapshot(
             scalars.Width,
@@ -110,7 +153,8 @@ public sealed class TetrisActor : IDisposable
             active,
             scalars.ClearedLines,
             scalars.IsGameOver,
-            scalars.IsAwaitingPiece);
+            scalars.IsAwaitingPiece,
+            activeType);
     }
 
     /// <summary>Runs a single-scalar string query and returns the value under <paramref name="key"/>.</summary>

@@ -16,7 +16,8 @@ public sealed record WellSnapshot(
     IReadOnlyList<Cell> Active,
     int ClearedLines,
     bool IsGameOver,
-    bool IsAwaitingPiece);
+    bool IsAwaitingPiece,
+    string? ActiveType = null);
 
 /// <summary>A single occupied grid cell (row grows downward, column rightward).</summary>
 public readonly record struct Cell(int Row, int Column);

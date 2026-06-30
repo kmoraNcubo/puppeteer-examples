@@ -1,4 +1,3 @@
-using System.Text;
 using Tetris.Acting;
 
 // An interactive, keyboard-driven Tetris you play in the terminal. It drives a
@@ -180,41 +179,21 @@ bool ApplyAutoMove(WellSnapshot snapshot)
 
 void Render(WellSnapshot snapshot)
 {
-    var occupied = new HashSet<Cell>(snapshot.Occupied);
-
-    var sb = new StringBuilder();
-    sb.AppendLine("TETRIS — ←/→ move   ↑ rotate   ↓ soft drop   Space hard drop   Q/Esc quit");
-    sb.AppendLine($"Lines cleared: {snapshot.ClearedLines}");
-    sb.AppendLine();
-
-    for (var row = 0; row < snapshot.Height; row++)
-    {
-        sb.Append('|'); // left wall
-        for (var column = 0; column < snapshot.Width; column++)
-        {
-            sb.Append(occupied.Contains(new Cell(row, column)) ? "[]" : "  ");
-        }
-
-        sb.AppendLine("|"); // right wall
-    }
-
-    sb.Append('+').Append(new string('=', snapshot.Width * 2)).AppendLine("+"); // floor
-
-    if (snapshot.IsGameOver)
-    {
-        sb.AppendLine();
-        sb.AppendLine("            G A M E   O V E R");
-    }
+    // The grid drawing is shared with the AI CLI via BoardRenderer; this host
+    // owns only the header text and how the frame reaches the terminal.
+    var board = BoardRenderer.Board(
+        snapshot,
+        "TETRIS — ←/→ move   ↑ rotate   ↓ soft drop   Space hard drop   Q/Esc quit");
 
     if (interactiveConsole)
     {
         // Cursor-home redraw rather than Console.Clear, to avoid flicker.
         Console.SetCursorPosition(0, 0);
-        Console.Write(sb.ToString());
+        Console.Write(board);
     }
     else
     {
         // Headless (redirected) fallback: append the frame.
-        Console.WriteLine(sb.ToString());
+        Console.WriteLine(board);
     }
 }
