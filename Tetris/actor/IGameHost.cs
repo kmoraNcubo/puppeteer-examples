@@ -76,12 +76,17 @@ internal sealed class StageHost : IGameHost
 
     public StageHost(StageV2 stage) => this.stage = stage;
 
+    // VSTHRD002: blocking on the Stage's async command is intentional — the actor's
+    // verbs are synchronous and the runner serialises commands (one in flight), so
+    // there is no sync-over-async re-entrancy. See the type doc above.
+#pragma warning disable VSTHRD002
     public string Command(string script) =>
         stage.PerformCmd(script).GetAwaiter().GetResult();
 
     public string CheckThenCommand(string check, string command) =>
         stage.PerformCheckThenCommand(check, command, DateTime.Now, "0.0.0.0", "Anonymous")
             .GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
 
     public string Query(string script) =>
         stage.PerformQry(script, new Parameters());
