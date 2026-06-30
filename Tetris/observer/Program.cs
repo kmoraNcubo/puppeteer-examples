@@ -1,9 +1,11 @@
 using Tetris.Acting;
 
-// Tetris OBSERVER — a long-lived, foreground, READ-ONLY watcher of a persistent
-// session. It never issues a command/verb; it only re-reads the session's
-// snapshot and re-renders when something changed. This is the Paper-9
-// non-commanding-observer role: it watches another commander (the AI CLI) play.
+// Tetris OBSERVER — DOCUMENTED FALLBACK (pull-poll). The primary live viewer is
+// now Tetris/watch (TetrisWatch), which receives the game's frame DIRECTLY over
+// the OutputTarget PUSH channel. This poll-pull observer is kept only as the
+// fallback for when a push channel is unavailable: a long-lived, foreground,
+// READ-ONLY watcher that re-reads the session's snapshot and re-renders on change.
+// It never issues a command/verb.
 //
 // Usage: TetrisObserver <session>
 //
@@ -15,10 +17,11 @@ using Tetris.Acting;
 // reflects the latest persisted state. Verified: a held-open reader sees no lock
 // error but goes stale; re-open-per-poll tracks the writer's appends.
 //
-// PULL vs PUSH (Paper-9 seam): this poll-pull is the floor. The Paper-9 upgrade
-// is OutputTarget PUSH — the game pushes each frame to the observer's view with
-// no polling. The render path here (BoardRenderer + the HUD) is exactly what a
-// push sink would feed; wiring OutputTarget is deliberately left for that step.
+// PULL vs PUSH (Paper-9): this poll-pull is the floor — a "narrator" that
+// reconstructs the board by re-reading the journal. The direct upgrade, now
+// realised in Tetris/watch, is OutputTarget PUSH: the game EMITS each frame and
+// the viewer RECEIVES it (FileSystemWatcher on the pushed frame file), no polling
+// and no journal reconstruction.
 
 const int width = 10;
 const int height = 20;

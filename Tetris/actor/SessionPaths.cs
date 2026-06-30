@@ -18,7 +18,17 @@ public static class SessionPaths
         "tetris-sessions");
 
     /// <summary>The journal directory for <paramref name="session"/> (one subdirectory per id).</summary>
-    public static string For(string session)
+    public static string For(string session) => Path.Combine(Root, Safe(session));
+
+    /// <summary>
+    /// The live-frame file for <paramref name="session"/> — the ephemeral screen
+    /// the push sink overwrites and the viewer watches. Kept beside (not inside)
+    /// the journal directory so a <see cref="System.IO.FileSystemWatcher"/> sees a
+    /// simple single-file change.
+    /// </summary>
+    public static string FrameFile(string session) => Path.Combine(Root, Safe(session) + ".frame");
+
+    private static string Safe(string session)
     {
         var safe = string.Concat(session.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
         if (safe.Length == 0)
@@ -26,6 +36,6 @@ public static class SessionPaths
             throw new ArgumentException("Session id must contain at least one usable character.", nameof(session));
         }
 
-        return Path.Combine(Root, safe);
+        return safe;
     }
 }

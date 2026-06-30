@@ -39,7 +39,11 @@ else if (!Directory.Exists(journalDir))
     return 1;
 }
 
-using var game = TetrisActor.Persistent(session, width, height, journalDir);
+// Wire the PUSH channel: each mutating op's frame is emitted by a reaction and
+// pushed to this per-session frame file. The live viewer (tetris-watch) watches
+// that file and repaints on change — direct push, not a poll.
+var sink = new FrameFileSink(SessionPaths.FrameFile(session));
+using var game = TetrisActor.Persistent(session, width, height, journalDir, sink);
 
 // Query-first orchestration, mirroring the console: feed a piece whenever the
 // well is awaiting one (after a landing or at game start).
@@ -94,6 +98,12 @@ switch (op)
         Console.Error.WriteLine($"unknown op '{op}'. ops: new, left, right, rotate, tick, drop, view");
         return 2;
 }
+
+// Drive the frame reactions: any journal entry this op appended is replayed and
+// its frame is Emitted + pushed to the sink SYNCHRONOUSLY, before this short-lived
+// process exits. (view appends nothing → no push; the frame file already holds
+// the latest frame for the watcher.)
+game.RunReactions();
 
 // Always print the commander's projection: the shared board plus a metadata line
 // carrying everything needed to choose the next move.

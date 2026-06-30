@@ -11,21 +11,26 @@
     <ProjectReference Include="..\domain\TetrisDomain.csproj" />
 
     <!--
-      TEMPORARY engine reference. This points at the full Puppeteer Pacifico dev
-      checkout, where Choreography builds strong-name-signed. The public clone
-      (referenced by HelloWorld as ..\..\..\puppeteer\...) currently cannot build
-      Choreography because its signing key is not synced to the public repo.
+      TEMPORARY engine reference. It points at the `feature/outputtarget-push`
+      WORKTREE of the Puppeteer Pacifico dev checkout, because the live PUSH
+      observer needs the OutputTarget API (IOutputSink / PushDocument /
+      PerformanceV2.OutputTarget), which lives only on that feature branch — it
+      is not yet in the main checkout, let alone the public clone. The worktree is
+      master + the OutputTarget feature (a superset), and builds signed.
 
-      Once the pending Pacifico commits are synced to the public clone (and
-      Choreography is de-signed there), this MUST move to the public-clone paths
-      to match the HelloWorld convention:
-          ..\..\..\puppeteer\Puppeteer\Puppeteer.csproj
-          ..\..\..\puppeteer\Choreography\Choreography.csproj
+      Reference progression as the feature lands:
+        1. (now) feature worktree — has OutputTarget:
+             ..\..\..\Puppeteer Pacifico\.claude\worktrees\outputtarget-push\...
+        2. once merged to Pacifico master:
+             ..\..\..\Puppeteer Pacifico\Puppeteer|Choreography\*.csproj
+        3. once synced to the public clone (and Choreography de-signed there),
+           to match the HelloWorld convention:
+             ..\..\..\puppeteer\Puppeteer|Choreography\*.csproj
       The example assemblies stay unsigned; an unsigned assembly may reference a
-      signed one, so this builds today against the signed Pacifico assemblies.
+      signed one, so this builds today against the signed worktree assemblies.
     -->
-    <ProjectReference Include="..\..\..\Puppeteer Pacifico\Puppeteer\Puppeteer.csproj" />
-    <ProjectReference Include="..\..\..\Puppeteer Pacifico\Choreography\Choreography.csproj" />
+    <ProjectReference Include="..\..\..\Puppeteer Pacifico\.claude\worktrees\outputtarget-push\Puppeteer\Puppeteer.csproj" />
+    <ProjectReference Include="..\..\..\Puppeteer Pacifico\.claude\worktrees\outputtarget-push\Choreography\Choreography.csproj" />
   </ItemGroup>
 
 </Project>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Choreography.Theater;
 using Puppeteer;
+using Puppeteer.EventSourcing.Interpreter.Formatters;
 using Tetris;
 
 namespace Tetris.Acting;
@@ -31,14 +32,32 @@ public sealed class TetrisActor : IDisposable
     private const string AwaitingPieceCheck =
         "{ Check(well.IsAwaitingPiece == true) WARNING 'not awaiting a piece'; }";
 
+    // The frame projection a reaction Emits on each mutation — the SAME structured
+    // view the AI CLI builds for stdout: scalars, the active piece TYPE (guarded,
+    // because well.Active is null while awaiting/over), and the occupied interior
+    // cells. Rendered with the JsonFormatter on the push channel so a viewer can
+    // parse it with System.Text.Json.
+    private const string FrameProjection =
+        "{ print well.Frame.Width width, well.Frame.Height height, " +
+        "well.ClearedLines cleared, well.IsGameOver over, well.IsAwaitingPiece awaiting; " +
+        "if (well.IsGameOver == false && well.IsAwaitingPiece == false) { print well.Active.Type type; } " +
+        "foreach (cell in well.OccupiedInterior()) { print cell.Row r, cell.Column c; } }";
+
+    // The mutating verbs a frame reaction must fire on. A Job reaction per verb
+    // (OR-match within one Seek is not an exercised path), all sharing the same
+    // Emit projection. Spawn carries an argument; the rest are nullary.
+    private static readonly string[] MutatingVerbs =
+        ["Spawn($p)", "MoveLeft()", "MoveRight()", "Rotate()", "Tick()", "Drop()"];
+
     private readonly PerformanceV2 performance;
+    private readonly bool pushEnabled;
 
     /// <summary>
-    /// Opens an in-memory session (state lost on process exit). This is the ctor
-    /// the human console uses.
+    /// Opens an in-memory session (state lost on process exit), with no push
+    /// channel. This is the ctor the human console uses — unchanged.
     /// </summary>
     public TetrisActor(string actorName, int width, int height)
-        : this(actorName, width, height, DatabaseType.IN_MEMORY, "InMemory")
+        : this(actorName, width, height, DatabaseType.IN_MEMORY, "InMemory", sink: null)
     {
     }
 
@@ -47,11 +66,19 @@ public sealed class TetrisActor : IDisposable
     /// <paramref name="journalDirectory"/>. State survives across process exits:
     /// a later <see cref="TetrisActor"/> on the same directory rehydrates by
     /// replaying the journal. Used by the per-op AI CLI and the observer.
+    /// <para>
+    /// If <paramref name="sink"/> is supplied, a push channel is wired: a Job
+    /// reaction per mutating verb Emits the <see cref="FrameProjection"/> through
+    /// the sink. Drive it by calling <see cref="RunReactions"/> after each op —
+    /// the matched reaction's <c>Program.Emit</c> pushes the frame synchronously,
+    /// before the call returns, which is what makes it usable from a short-lived
+    /// per-op process.
+    /// </para>
     /// </summary>
-    public static TetrisActor Persistent(string actorName, int width, int height, string journalDirectory) =>
-        new(actorName, width, height, DatabaseType.FileSystem, $"path={journalDirectory};maxFileSize=4194304");
+    public static TetrisActor Persistent(string actorName, int width, int height, string journalDirectory, IOutputSink? sink = null) =>
+        new(actorName, width, height, DatabaseType.FileSystem, $"path={journalDirectory};maxFileSize=4194304", sink);
 
-    private TetrisActor(string actorName, int width, int height, DatabaseType storage, string connectionString)
+    private TetrisActor(string actorName, int width, int height, DatabaseType storage, string connectionString, IOutputSink? sink)
     {
         // The framework discovers the domain (Well, Piece, …) by reflection over
         // this assembly; only the public anchor TetrisDomain is needed as the seam.
@@ -59,10 +86,47 @@ public sealed class TetrisActor : IDisposable
             .ConfigureStorage(storage, connectionString)
             .Start();
 
+        pushEnabled = sink is not null;
+        if (sink is not null)
+        {
+            // Configure the push channel with the JSON formatter (override the
+            // TOON default so the frame parses cleanly), then define one Job
+            // reaction per mutating verb sharing the frame projection.
+            performance.OutputTarget(sink, new JsonFormatter());
+            foreach (var verb in MutatingVerbs)
+            {
+                var name = "Frame_" + verb.Split('(')[0];
+                performance.Actor.Reactions.DefineReaction(name)
+                    .Job().Company().WithSharedHydration()
+                    .Seek(name + "Seek")
+                        .OnMatch($"[_:Well].{verb}")
+                    .Program.Emit(FrameProjection);
+            }
+        }
+
         // Seed the aggregate into actor state. 'upgrade' runs its body once and
         // is recognised as already-applied on every later rehydration — so a
         // persistent session that already has a 'seed' entry keeps its well.
         performance.Using($"upgrade('seed') {{ well = Well({width}, {height}); }}").PerformCommand();
+    }
+
+    /// <summary>
+    /// Drives the frame reactions: replays journal entries appended since the last
+    /// run and, for each that matches a mutating verb, the reaction's
+    /// <c>Program.Emit</c> pushes the frame projection to the sink — SYNCHRONOUSLY,
+    /// before this returns (Job/Batch mode). A no-op when no push channel was
+    /// configured. The reaction checkpoint is persisted with the journal, so
+    /// across per-op processes only the newly-appended entries push (one push per
+    /// new entry; a landing op that also spawns appends two entries and pushes
+    /// twice, the latter being the final frame — the file sink overwrites, so the
+    /// viewer always shows the latest).
+    /// </summary>
+    public void RunReactions()
+    {
+        if (pushEnabled)
+        {
+            performance.Actor.Reactions.Execute();
+        }
     }
 
     // ── Inbound verbs (the controller surface) ─────────────────────────────
