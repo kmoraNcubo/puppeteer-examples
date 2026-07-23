@@ -14,10 +14,15 @@ using Tetris.Input;
 //                     (drive moves with `TetrisSend g1 <key>`; gravity ticks
 //                      autonomously; frames push to the shared frame file for
 //                      tetris-watch)
+//   Gesture (camera): TetrisStage g1 --sources gesture,clock --clock-ms 800
+//                     (a webcam sidecar streams hand-POSE tokens to the gesture
+//                      source over TCP 127.0.0.1:<gesture-port>; the domain sees
+//                      left/right/rotate/drop and never learns a camera exists —
+//                      see gesture/README.md)
 //   Flex (co-drive) : TetrisStage g1 --sources keyboard,pipe,clock --clock-ms 800
 //
-// Stop: send `quit` from any source (keyboard Q/Esc, or `TetrisSend <session>
-// quit`), or Ctrl-C.
+// Stop: send `quit` from any source (keyboard Q/Esc, `TetrisSend <session> quit`,
+// or the gesture source's quit pose), or Ctrl-C.
 
 if (args.Length < 1)
 {
@@ -29,6 +34,7 @@ if (args.Length < 1)
 var session = args[0];
 var sourceNames = "keyboard,clock";
 var clockMs = 500;
+var gesturePort = 5111;
 
 for (var i = 1; i < args.Length - 1; i++)
 {
@@ -37,6 +43,9 @@ for (var i = 1; i < args.Length - 1; i++)
         case "--sources": sourceNames = args[i + 1]; break;
         case "--clock-ms":
             if (int.TryParse(args[i + 1], out var ms) && ms > 0) clockMs = ms;
+            break;
+        case "--gesture-port":
+            if (int.TryParse(args[i + 1], out var port) && port > 0) gesturePort = port;
             break;
     }
 }
@@ -50,7 +59,8 @@ foreach (var name in sourceNames.Split(',', StringSplitOptions.RemoveEmptyEntrie
         "keyboard" => new KeyboardSource(),
         "pipe" => new PipeSource(session),
         "clock" => new ClockSource(clockMs),
-        _ => throw new ArgumentException($"unknown source '{name}'. known: keyboard, clock, pipe"),
+        "gesture" => new GestureSource(gesturePort),
+        _ => throw new ArgumentException($"unknown source '{name}'. known: keyboard, clock, pipe, gesture"),
     };
     stage.InputSource(source);
 }
