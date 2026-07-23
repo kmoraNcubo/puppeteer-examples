@@ -8,15 +8,18 @@ three machines (Paper 7 §5.2 fixes the peer count at THREE — the minimum at w
 the no-privileged-node claim is unambiguous). The distributed staging is now real,
 not written-around.
 
-**The measurement is a ZERO, not an adjective.** The new capability is a new host
-plus docker files; the domain and the actor are byte-for-byte unchanged:
+**The measurement is a ZERO, not an adjective.** The load-bearing invariant — the
+`Well` domain — is byte-for-byte unchanged by the C2 deployment work:
 
 ```
-$ git diff -- Tetris/domain     # (empty)
-$ git diff -- Tetris/actor       # (empty)
+$ git diff 485b766..HEAD -- Tetris/domain     # (empty)
 ```
 
-Both diffs are empty. See [§4](#4-acceptance-test-the-measurements).
+The C2 deployment increment (commit `974f62a`) also left `Tetris/actor` untouched.
+A **later, separately-scoped follow-up** (verifying caveat 1 below) does make one
+corrective, example-only fix to `Tetris/actor` — parametrizing the frame commands
+so the push channel works; the `Well` domain stays untouched throughout. See
+[§4](#4-acceptance-test-the-measurements) and [§6 caveat 1](#6-honest-caveats--what-is-and-is-not-reached).
 
 ---
 
@@ -102,10 +105,14 @@ replicate the Well live over TLS and each render their own frame.
 All three nodes reach the **same journal entry (13) with byte-identical Well state**:
 
 ```
-tetris-a  | [tetris-a] convergence checkpoint reached: role=DIRECTOR entry=13 snapshot=type=- cleared=0 awaiting=True over=False cells=8
-tetris-b  | [tetris-b] convergence checkpoint reached: role=cast     entry=13 snapshot=type=- cleared=0 awaiting=True over=False cells=8
-tetris-c  | [tetris-c] convergence checkpoint reached: role=cast     entry=13 snapshot=type=- cleared=0 awaiting=True over=False cells=8
+tetris-a  | [tetris-a] convergence checkpoint reached: role=DIRECTOR entry=19 snapshot=type=- cleared=0 awaiting=True over=False cells=8
+tetris-b  | [tetris-b] convergence checkpoint reached: role=cast     entry=19 snapshot=type=- cleared=0 awaiting=True over=False cells=8
+tetris-c  | [tetris-c] convergence checkpoint reached: role=cast     entry=19 snapshot=type=- cleared=0 awaiting=True over=False cells=8
 ```
+
+(The journal reaches entry 19 now that each mutating verb journals as a V2 Action —
+Define+Invocation — rather than a single literal Script; see [§6 caveat 1](#6-honest-caveats--what-is-and-is-not-reached).
+The three nodes still converge to the identical entry and Well state.)
 
 The cross-container TLS handshake (director view; heartbeat noise removed):
 
@@ -118,8 +125,8 @@ tetris-a | [tetris] coordination up with tetris-c
 tetris-a | [tetris] promoted to Director (IsDirector=True) over real TLS
 tetris-a | [tetris] data star up with tetris-b (replication+command)
 tetris-a | [tetris] data star up with tetris-c (replication+command)
-tetris-a | [tetris] scripted sequence done; final journal entry = 13
-tetris-a | [tetris] catch-up sent to 2 cast(s) up to entry 13
+tetris-a | [tetris] scripted sequence done; final journal entry = 19
+tetris-a | [tetris] catch-up sent to 2 cast(s) up to entry 19
 ```
 
 Cast `tetris-c` (self-signed cert distinct per container; pins both peers;
@@ -131,77 +138,73 @@ tetris-c | [tetris] pinned peer https://tetris-a:5443/ → fp cf39405438508d77�
 tetris-c | [tetris] coordination up with director
 tetris-c | [Stage …] DirectorAnnounce from 593a207917ff4dd7… (peerMax=0)
 tetris-c | [tetris] data star up with director (replication+command); director announced.
-tetris-c | [tetris] caught up to entry 13 (target 13)
+tetris-c | [tetris] caught up to entry 19 (target 19)
 tetris-c | [tetris]   cast sees: type=- cleared=0 awaiting=True over=False cells=8   <- REPLICATED over TLS
 ```
 
-**Each node writes its frame** (per-node `/data` volume). The rendered board grid is
-**byte-identical across all three** (only the one-line header, which names the node,
-differs):
+**Each node writes its frame** to its per-node `/data` volume — and this is the
+real **push channel**: the frame reaction fires on each mutating verb and PUSHES
+the rendered frame to that node's `FrameFileSink` (working now that the verbs
+journal as V2 Actions — see [§6 caveat 1](#6-honest-caveats--what-is-and-is-not-reached)).
+The pushed frame is the `print`ed projection (JSON), and it is **byte-identical
+across all three nodes** (the sink writes the raw projection — no per-node header —
+so identical replicated state ⇒ identical bytes):
 
 ```
-$ for f in a b c; do docker compose exec -T tetris-$f cat /data/tetris-$f.frame \
-      | tail -n +3 | md5sum; done
-49ba6f3c0a1b9322f82c4d54ce00cd9e  -   # tetris-a grid
-49ba6f3c0a1b9322f82c4d54ce00cd9e  -   # tetris-b grid
-49ba6f3c0a1b9322f82c4d54ce00cd9e  -   # tetris-c grid
+$ for f in a b c; do docker compose exec -T tetris-$f cat /data/tetris-$f.frame | md5sum; done
+5ec7093bed92239198a3add00ad88282  -   # tetris-a
+5ec7093bed92239198a3add00ad88282  -   # tetris-b
+5ec7093bed92239198a3add00ad88282  -   # tetris-c
 ```
 
-The converged board (the two dropped pieces, 8 cells):
+The converged frame (two dropped pieces, 8 occupied cells), pushed to every node:
 
-```
-tetris-c (cast) entry=13
-Lines cleared: 0
-
-|                    |
-   … (empty rows) …
-|      []            |
-|      [][][][]      |
-|        [][][]      |
-+====================+
+```json
+{"width":10,"height":20,"cleared":0,"over":false,"awaiting":true,
+ "cell":[{"r":18,"c":3},{"r":18,"c":7},{"r":17,"c":3},
+         {"r":19,"c":3},{"r":19,"c":4},{"r":19,"c":5},{"r":19,"c":6},{"r":19,"c":7}]}
 ```
 
 Full run log: [`experiment-a-crossmachine.log`](experiment-a-crossmachine.log).
 
-### 4b. Purely additive — domain and actor unchanged
+### 4b. `Well` domain untouched; two commits (C2 deploy, then the frame-sink fix)
 
 Base commit: **`485b766`** (`Tetris: point engine reference at Pacifico master`).
 
-```
-$ git diff -- Tetris/domain      →  (empty)   exit 0
-$ git diff -- Tetris/actor        →  (empty)   exit 0
-$ git status --short
-  ?? Tetris/docker/
-  ?? Tetris/sm-cluster/
-  (Tetris/Tetris.sln: additive — new project registration only)
-$ git diff --stat -- Tetris/sm-duo Tetris/sm-duo-tls Tetris/sm-server \
-                     Tetris/console Tetris/web Tetris/web-rest
-  (empty — existing hosts untouched)
-```
-
-Confirmed again across the whole additive commit range **`485b766..HEAD`** (the
-single commit that is this increment; base `485b766` is the prior tip):
+**The load-bearing invariant — the `Well` domain — is untouched across everything:**
 
 ```
 $ git diff 485b766..HEAD -- Tetris/domain   →  (empty)   exit 0
-$ git diff 485b766..HEAD -- Tetris/actor      →  (empty)   exit 0
-$ git diff 485b766..HEAD --stat
-  Tetris/Tetris.sln                           |  19 +-   (project registration; the 1 "deletion" is a UTF-8 BOM)
-  Tetris/docker/.gitattributes                |   3 +
-  Tetris/docker/.gitignore                    |   2 +
-  Tetris/docker/Dockerfile                    |  30 ++
-  Tetris/docker/docker-compose.yml            |  87 ++
-  Tetris/docker/run-demo.sh                   | 103 ++
-  Tetris/notes/experiment-a-crossmachine.log  | 127 ++
-  Tetris/notes/experiment-a-crossmachine.md   | 249 ++
-  Tetris/sm-cluster/Program.cs                | 439 ++
-  Tetris/sm-cluster/TetrisStageCluster.csproj |  19 ++
-  10 files changed, 1077 insertions(+), 1 deletion(-)
 ```
 
-Every changed path is new (a host, docker files, notes) or the additive solution
-registration — no domain, no actor, no existing host. (Commit is LOCAL to the
-worktree; not pushed.)
+**Commit 1 — the C2 deployment (`974f62a`): purely additive, actor untouched.**
+
+```
+$ git diff 485b766..974f62a -- Tetris/domain   →  (empty)   exit 0
+$ git diff 485b766..974f62a -- Tetris/actor      →  (empty)   exit 0   # C2 deploy added no actor change
+$ git diff 485b766..974f62a --stat   # only: sm-cluster/, docker/, notes/, +sln registration
+```
+
+The C2 deployment is a new host (`sm-cluster`) + docker files + notes, plus the
+additive `.sln` registration — no domain, no actor, no existing host.
+
+**Commit 2 — the frame-sink correction (this follow-up): touches the actor, NOT the domain.**
+Verifying caveat 1 (below) showed the inert frame push was a non-canonical command
+form in `TetrisActor`, not a framework limit. The fix parametrizes the frame
+commands and is confined to the example host adapter:
+
+```
+$ git diff 974f62a..HEAD -- Tetris/domain   →  (empty)   exit 0   # domain STILL untouched
+$ git diff 974f62a..HEAD --stat
+  Tetris/actor/IGameHost.cs                   | …   (parametrized CheckThenCommand overload)
+  Tetris/actor/TetrisActor.cs                 | …   (Spawn(@type) + nominal @step on nullary verbs)
+  Tetris/sm-cluster/Program.cs                | …   (rely on the now-working sink; drop the render fallback)
+  Tetris/notes/experiment-a-crossmachine.{md,log} | …
+```
+
+So: the paper's "zero domain changes" claim holds unconditionally (the `Well` is
+byte-for-byte identical); the actor received one small, deliberate, example-only
+correction. (Both commits are LOCAL to the worktree; not pushed.)
 
 ## 5. How to reproduce
 
@@ -219,19 +222,48 @@ reached` lines.
 
 ## 6. Honest caveats — what is and is not reached
 
-1. **Frame *push sink* is currently inert for every Stage host (pre-existing drift,
-   not a C2 regression).** The engine's reaction matcher on current master observes
-   *ActorV2 Actions (Define+Invocation)*; `TetrisActor` issues *literal-script*
-   commands, so `[Reaction 'Frame_*'] skipped a literal ScriptEvent`. The
-   `FrameFileSink` push channel therefore never fires — **this also happens in the
-   shipped `sm-duo-tls`** (verified: it writes no `.frame` files either; its
-   "REPLICATED over TLS" is likewise shown via `Snapshot()`). Because the actor and
-   engine are off-limits, this host wires the sink identically **and** additionally
-   renders each node's frame **directly from the `WellSnapshot` it holds** (reusing
-   the existing `BoardRenderer`). So "each writes its frame" holds — via the host we
-   own, from replicated state, independent of the drifted push path. Fixing the push
-   path proper would require migrating `TetrisActor` to parametrized V2 commands
-   (an actor change, out of scope).
+1. **Frame push sink — RESOLVED. It was a non-canonical pattern in `TetrisActor`,
+   NOT a framework limit** (an earlier draft of this note wrongly called it an
+   engine/actor "drift/limit"; corrected here after verifying against the framework).
+
+   *Symptom.* On current engine master the `FrameFileSink` push channel never fired
+   on any host — `[Reaction 'Frame_*'] skipped a literal ScriptEvent` — so no host
+   wrote a `.frame` file (verified on `sm-cluster`, on the shipped `sm-duo-tls`, and
+   on the PerformanceV2 `ai` writer alike).
+
+   *Root cause (verified in framework code).* `Reaction.ResolveEventForMatching`
+   (`Puppeteer/EventSourcing/Follower/Reaction.cs:1693`) skips a `ScriptEventData`
+   for a *pure-domain* reaction **by design** — a domain reaction observes V2
+   **Actions** (Define+Invocation), never literal Scripts (`IsPureDomainReaction`,
+   line 1794). `TetrisActor` issued every verb as a **bare literal Script**
+   (`well.MoveLeft();`, `well.Spawn('T');` with no `@parameters`), so each journaled
+   as a `ScriptEvent` and was skipped. The framework's own advisory says exactly this:
+   *"Migrate the producing endpoint to a parametrized V2 command."*
+
+   *Both suspicions settled by a controlled probe* (PerformanceV2 + the real `Well`,
+   one reaction per verb):
+   - The receiver `[_:Well].verb()` (aggregate root-var method, not an actor role) is
+     **fine** — it matches and pushes once the command is an Action.
+   - The **Script-vs-Action** distinction was the blocker. `well.Spawn(@t)` +
+     `WithParameters(t='T')` → Action → `[_:Well].Spawn($p)` pushed; a nullary
+     `well.MoveLeft()` + a nominal `@param` → Action → `[_:Well].MoveLeft()` pushed;
+     the bare `well.Spawn('T')` → Script → skipped.
+
+   *Fix (example only; domain untouched).* `TetrisActor` now issues its verbs as
+   parametrized V2 Actions: `well.Spawn(@type)` carries the resolved letter as a
+   parameter (this also removes a DSL-string-concat anti-pattern — parameters.md §5),
+   and the nullary move verbs carry a nominal `@step` purely to force Action
+   journaling. `IGameHost.CheckThenCommand` gained an `Action<Parameters>` overload;
+   both adapters (`PerformanceHost`, `StageHost`) route through it.
+
+   *Result — the push revives on every host.* The `FrameFileSink` now fires: all
+   three cluster nodes push byte-identical JSON frames (§4a, md5 `5ec7093b…`), the
+   shipped `sm-duo-tls` writes its `-d`/`-c` frames, and the `ai` PerformanceV2 writer
+   writes its frame. `sm-cluster` therefore now relies on the **real push channel**
+   (the earlier direct-from-`Snapshot` `BoardRenderer` fallback was removed). Domain
+   tests remain green (44/44). The only literal Script left is the one-time `seed`
+   `upgrade` (journal entry 1), which no frame reaction observes — its single Debug
+   advisory is benign.
 
 2. **Rendezvous bootstrap uses a shared Docker volume**, not the network. This is
    deliberate and mirrors Paper 7. The *peer data plane* (coordination, replication,

@@ -216,12 +216,10 @@ async Task RunDirectorAsync(StageV2 stage)
 
     // 3d. Wrap the SAME Well with the polymorphic TetrisActor and play. The seed
     //     'upgrade' lands on the Director and replicates live to the (already
-    //     connected) casts. The FrameFileSink is wired exactly as sm-duo / sm-duo-tls
-    //     wire it (the push-channel path); we ALSO render the frame explicitly from
-    //     the snapshot (see WriteFrame) because the engine's reaction matcher on
-    //     current master observes V2 Actions, not the literal ScriptEvents this actor
-    //     emits, so the push sink is presently inert for every Stage host — a
-    //     pre-existing actor/engine drift, not a C2 regression (see notes).
+    //     connected) casts. Each mutating verb fires the frame reaction, which
+    //     PUSHES the rendered frame to this node's FrameFileSink — the real
+    //     push-channel path (now that TetrisActor issues its verbs as V2 Actions;
+    //     see notes §caveat 1). RunReactions (inside PlayScriptedSequence) drives it.
     string framePath = Path.Combine(dataDir, $"{Safe(session)}-{nodeId}.frame");
     var sink = new FrameFileSink(framePath);
     using var game = TetrisActor.OnStage(stage, width, height, sink);
@@ -229,9 +227,8 @@ async Task RunDirectorAsync(StageV2 stage)
     PlayScriptedSequence(game);
 
     long finalEntry = stage.CurrentEntryId;
-    WriteFrame(game, framePath, $"tetris-{nodeId} (DIRECTOR) entry={finalEntry}");
     Log($"scripted sequence done; final journal entry = {finalEntry}");
-    Log($"director frame → {framePath}");
+    Log($"director frame pushed → {framePath}");
     Log($"  director sees: {Describe(game.Snapshot())}");
 
     // 3e. Guarantee gap-free convergence. The framework's ListenReplication drops
@@ -295,14 +292,14 @@ async Task RunCastAsync(StageV2 stage)
     long target = long.Parse(doneRaw, CultureInfo.InvariantCulture);
     await WaitForEntryIdAtLeastAsync(stage, target, TimeSpan.FromSeconds(60), hct);
 
-    // Replay the replicated entries (push-channel path) and render this cast's own
-    // frame from the state it received over the wire.
+    // Replay the replicated entries: the frame reaction matches each replicated
+    // Action and PUSHES this cast's frame to its own sink — its own view, painted
+    // from the state it received over the wire.
     game.RunReactions();
 
     long entry = stage.CurrentEntryId;
-    WriteFrame(game, framePath, $"tetris-{nodeId} (cast) entry={entry}");
     Log($"caught up to entry {entry} (target {target})");
-    Log($"cast frame → {framePath}");
+    Log($"cast frame pushed → {framePath}");
     Log($"  cast sees: {Describe(game.Snapshot())}   <- REPLICATED over TLS");
 
     Console.WriteLine(
@@ -362,13 +359,6 @@ async Task HoldAliveAsync()
     try { await Task.Delay(Timeout.Infinite, ct); }
     catch (OperationCanceledException) { }
 }
-
-// Each node renders its OWN frame from the WellSnapshot it holds (the reused
-// BoardRenderer — the same ASCII grid the console and AI CLI draw) and writes it
-// to its per-node /data volume. This is the "each writes its frame" evidence,
-// produced from the replicated state each node independently observes.
-static void WriteFrame(TetrisActor game, string framePath, string header) =>
-    WriteAtomic(framePath, BoardRenderer.Board(game.Snapshot(), header));
 
 static string Describe(WellSnapshot s) =>
     $"type={s.ActiveType ?? "-"} cleared={s.ClearedLines} awaiting={s.IsAwaitingPiece} " +
