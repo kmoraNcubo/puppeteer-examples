@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Puppeteer;
 using Tetris.Acting;
 
 namespace Tetris.Input;
@@ -36,16 +37,18 @@ public sealed class TetrisStage : IDisposable
     private readonly TetrisActor game;
     private readonly List<IInputSource> sources = new();
 
-    public TetrisStage(string session)
+    public TetrisStage(string session, IOutputSink? outputSink = null)
     {
         var journalDir = SessionPaths.For(session);
         var fresh = !System.IO.Directory.Exists(journalDir)
                     || !System.IO.Directory.EnumerateFileSystemEntries(journalDir).GetEnumerator().MoveNext();
         System.IO.Directory.CreateDirectory(journalDir);
 
-        // One warm actor, rehydrated once; every command reuses it. Frames push to
-        // the shared per-session frame file the watcher reads.
-        var sink = new FrameFileSink(SessionPaths.FrameFile(session));
+        // One warm actor, rehydrated once; every command reuses it. The OUTPUT
+        // TARGET (the mirilla) is swappable: default to the frame file the watcher
+        // reads, or take one the host supplies (e.g. the scarce device's screen).
+        // Same seam either way — the automaton never knows which sink receives it.
+        var sink = outputSink ?? new FrameFileSink(SessionPaths.FrameFile(session));
         game = TetrisActor.Persistent(session, Width, Height, journalDir, sink);
 
         if (fresh)
