@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -62,6 +62,10 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "web-rest", "web-rest", "{54195F79-89D5-4FA0-AD3B-B36755263A19}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TetrisWebRest", "web-rest\TetrisWebRest.csproj", "{5813F98B-FF7E-4CCA-B52F-84618CFA7ED3}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "sm-cluster", "sm-cluster", "{D17D053C-3A97-81E2-A015-712B4CFCAA4C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TetrisStageCluster", "sm-cluster\TetrisStageCluster.csproj", "{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -253,6 +257,18 @@ Global
 		{5813F98B-FF7E-4CCA-B52F-84618CFA7ED3}.Release|x64.Build.0 = Release|Any CPU
 		{5813F98B-FF7E-4CCA-B52F-84618CFA7ED3}.Release|x86.ActiveCfg = Release|Any CPU
 		{5813F98B-FF7E-4CCA-B52F-84618CFA7ED3}.Release|x86.Build.0 = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|x64.Build.0 = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Debug|x86.Build.0 = Debug|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|x64.ActiveCfg = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|x64.Build.0 = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|x86.ActiveCfg = Release|Any CPU
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -273,5 +289,6 @@ Global
 		{45835F6D-46EC-449D-A278-E65CAA50AB45} = {ED2C978C-0044-4998-920B-673B96B3BDF3}
 		{2245AA07-2CF4-4BA8-AF31-33A28EE6F678} = {8A5C551F-D895-4951-8111-1B794080AEA7}
 		{5813F98B-FF7E-4CCA-B52F-84618CFA7ED3} = {54195F79-89D5-4FA0-AD3B-B36755263A19}
+		{4ED7579A-1D7E-43BD-8D1D-CEEA05D5860D} = {D17D053C-3A97-81E2-A015-712B4CFCAA4C}
 	EndGlobalSection
 EndGlobal
