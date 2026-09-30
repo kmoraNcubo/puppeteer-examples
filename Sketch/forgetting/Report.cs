@@ -79,12 +79,14 @@ internal static class Report
             "Segment bytes are the record files (journal/journal_*.bin); all bytes include the index, elision marks, skip set, reaction registry and checkpoints, and meta.", "muted"));
 
         html.Append(Heading("6. What was given up"));
-        html.Append(Paragraph($"Right after entry {n.Past.MidSessionEntry:N0} the canvas held {n.Past.StrokesAtMid:N0} strokes, {n.Past.HesitationsAtMid.Count} of them hesitations not yet erased (highlighted). " +
-            $"Asked of that moment, the same forgetting is <span class=\"verdict\">{(n.Past.ForgettingIsSafeForThePast ? "safe" : "unsafe")}</span>: it changes {string.Join(" and ", n.Past.ChangedObservationsAtMid)}, leaving {n.Past.StrokesAtMidOnceForgotten:N0} strokes. " +
+        html.Append(Paragraph($"Before Distill, a shadow synced to entry {n.Past.MidSessionEntry:N0} shows the canvas as it stood then: {n.Past.StrokesAtMid:N0} strokes, {n.Past.HesitationsAtMid.Count} of them hesitations not yet erased (highlighted). " +
+            $"After Distill, a shadow synced to the same entry shows {n.Past.StrokesAtMidAfterDistill:N0} strokes and none of those hesitations. " +
+            $"Asked of that moment before the commit, the diff had called the same forgetting <span class=\"verdict\">{(n.Past.ForgettingIsSafeForThePast ? "safe" : "unsafe")}</span> (it changes {string.Join(" and ", n.Past.ChangedObservationsAtMid)}), " +
+            $"and the picture it predicted is {(n.Past.AfterDistillMatchesPrediction ? "byte-equal to" : "DIFFERENT from")} the one the shadow now replays. " +
             $"The journal held {n.Past.RecordsUpToMidBeforeDistill:N0} records up to that entry before Distill and {n.Past.RecordsUpToMidAfterDistill:N0} after it.", encode: false));
         html.Append("<div class=\"pair\">");
-        html.Append(Figure(svgs["past-then"], "The canvas then, as a shadow replays the full journal up to that entry"));
-        html.Append(Figure(svgs["past-forgotten"], "The same moment with the rule's entries skipped"));
+        html.Append(Figure(svgs["past-then"], "Before Distill: a shadow at that entry"));
+        html.Append(Figure(svgs["past-after-distill"], "After Distill: a shadow at the same entry"));
         html.Append("</div>");
 
         html.Append(Heading("What this does not establish"));

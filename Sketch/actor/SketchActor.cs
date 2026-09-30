@@ -202,13 +202,20 @@ public sealed class SketchActor : IDisposable
 
     /// <summary>
     /// The picture as it stood right after entry <paramref name="entryId"/>: a shadow replays
-    /// the primary's journal from genesis up to that entry and prints its picture.
+    /// the primary's journal from genesis up to that entry and prints its picture. The shadow
+    /// keeps its own journal under <paramref name="scratchDirectory"/>.
     /// </summary>
-    public PictureSnapshot PictureAt(long entryId)
+    public PictureSnapshot PictureAt(long entryId, string scratchDirectory)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(entryId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(scratchDirectory);
 
-        using Shadow shadow = OpenShadow("past");
+        // A FileSystem shadow keeps each copied record's EntryId, so it replays a journal
+        // with the gaps Distill leaves; an in-memory shadow numbers the copies afresh.
+        using Shadow shadow = performance.Actor.Shadow(new ShadowConfig(
+            $"past-{++shadowSequence}",
+            DatabaseType.FileSystem,
+            $"path={scratchDirectory};maxFileSize=4194304"));
         shadow.SyncUntil(entryId);
         return PictureSnapshot.Parse(shadow.PerformQry(PictureQuery));
     }

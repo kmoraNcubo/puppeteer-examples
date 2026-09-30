@@ -29,6 +29,8 @@ internal sealed record PastNumbers(
     bool ForgettingIsSafeForThePast,
     IReadOnlyList<string> ChangedObservationsAtMid,
     int StrokesAtMidOnceForgotten,
+    int StrokesAtMidAfterDistill,
+    bool AfterDistillMatchesPrediction,
     int RecordsUpToMidBeforeDistill,
     int RecordsUpToMidAfterDistill);
 

@@ -176,15 +176,14 @@ internal sealed class Lab
         // ── 6, before the commit: the past as the journal still holds it ───
         var (midIndex, onCanvasAtMid) = session.MidSessionMoment();
         long mid = entryAfter[midIndex];
-        var then = sketch.PictureAt(mid);
+        var then = sketch.PictureAt(mid, Scratch("past-then"));
         Check(onCanvasAtMid.All(id => then.Strokes.Any(stroke => stroke.Id == id)), "the picture at mid-session lacks the hesitations on the canvas then");
         var pastProof = sketch.ProveAt(mid, preview.WouldElide.Where(entry => entry <= mid).ToArray());
         var pastPicture = pastProof.Changes.SingleOrDefault(change => change.Observation == "picture");
         Check(!pastProof.IsSafe && pastPicture is not null, "forgetting did not change the picture of the past");
         var forgottenPast = PictureSnapshot.Parse(pastPicture!.WithElision);
         Check(forgottenPast.Strokes.All(stroke => !onCanvasAtMid.Contains(stroke.Id)), "the forgotten past still shows a hesitation");
-        svgs["past-then"] = PictureSvg.Render(then.Rendered, SvgWidth, $"The canvas right after entry {mid}", onCanvasAtMid.ToArray());
-        svgs["past-forgotten"] = PictureSvg.Render(pastPicture.WithElision, SvgWidth, $"The canvas after entry {mid}, with the rule's entries skipped");
+        svgs["past-then"] = PictureSvg.Render(then.Rendered, SvgWidth, $"The canvas right after entry {mid}, before Distill", onCanvasAtMid.ToArray());
 
         // ── 5. The commit ─────────────────────────────────────────────────
         log.Scene("5. The commit");
@@ -215,6 +214,13 @@ internal sealed class Lab
         Check(pictureEqual, "the reopened picture differs from the session's picture");
         Check(countEqual, "the reopened stroke count differs");
         Check(headAfterReopen == head, "reopening moved the journal head");
+
+        // ── 6, after the commit: the same moment, replayed from the distilled journal ──
+        var nowThen = sketch.PictureAt(mid, Scratch("past-after"));
+        Check(nowThen.Strokes.All(stroke => !onCanvasAtMid.Contains(stroke.Id)), "after Distill the picture of the past still shows a hesitation");
+        bool predicted = string.Equals(nowThen.Rendered, pastPicture.WithElision, StringComparison.Ordinal);
+        Check(predicted, "the past replayed after Distill differs from the picture the diff predicted");
+        svgs["past-after-distill"] = PictureSvg.Render(nowThen.Rendered, SvgWidth, $"The canvas right after entry {mid}, after Distill");
 
         int signature = session.Acts.Max(act => act.Id) + 1;
         Check(sketch.Draw(signature, 1500, 1150, 1560, 1150, "graphite"), "the next command was refused");
@@ -274,12 +280,15 @@ internal sealed class Lab
             pastProof.IsSafe,
             pastProof.Changes.Select(change => change.Observation).ToArray(),
             forgottenPast.Strokes.Count,
+            nowThen.Strokes.Count,
+            predicted,
             upToMidBefore,
             upToMidAfter);
-        log.Fact("mid-session entry", $"{mid} (picture and proof taken before the commit)");
-        log.Fact("strokes on the canvas then", $"{pastNumbers.StrokesAtMid}, of them hesitations: {string.Join(", ", onCanvasAtMid)}");
+        log.Fact("mid-session entry", mid);
+        log.Fact("strokes then, before Distill", $"{pastNumbers.StrokesAtMid}, of them hesitations: {string.Join(", ", onCanvasAtMid)}");
         log.Fact("forgetting, asked of that moment", $"{(pastProof.IsSafe ? "SAFE" : "UNSAFE")} — changed: {string.Join(", ", pastNumbers.ChangedObservationsAtMid)}");
-        log.Fact("strokes then, once forgotten", pastNumbers.StrokesAtMidOnceForgotten);
+        log.Fact("strokes then, as the diff predicted", pastNumbers.StrokesAtMidOnceForgotten);
+        log.Fact("strokes then, after Distill", $"{pastNumbers.StrokesAtMidAfterDistill} (the predicted picture, byte-equal: {predicted})");
         log.Fact("records up to that entry: before / after Distill", $"{upToMidBefore} / {upToMidAfter}");
 
         total.Stop();
