@@ -10,6 +10,10 @@ on its own, and its source reads as if no framework existed. The framework
 enters in [`actor/`](actor/), a typed facade that hosts the canvas on a
 journaled actor. The solution is [`Sketch.sln`](Sketch.sln).
 
+To learn elision and Distill from this example, begin at
+[Start here](#start-here-elision-and-distill).
+
+- [Start here: elision and Distill](#start-here-elision-and-distill)
 - [The model](#the-model)
 - [Forgetting on Purpose](#forgetting-on-purpose)
 - [Build and run](#build-and-run)
@@ -36,7 +40,149 @@ Sketch/
 | [`actor/`](actor/) | `SketchActor`, which hosts the canvas on a FileSystem journal, and `ForgettingRule`, the one reaction that decides what the journal may forget. |
 | [`view/`](view/) | `PictureSvg`, which draws the picture projection's printed text. It can draw either side of an elision diff as it is. |
 | [`forgetting/`](forgetting/) | The lab: a seeded session, the six scenes in order, every claim checked at run time, evidence written to `--out`. |
-| [`forgetting.tests/`](forgetting.tests/) | 29 end-to-end cases over real journals in temporary folders. |
+| [`forgetting.tests/`](forgetting.tests/) | 30 end-to-end cases over real journals in temporary folders. |
+
+## Start here: elision and Distill
+
+Forgetting part of a journal takes two steps, and this example shows both.
+**Elision** marks entries: every record stays on disk, and rehydration steps
+over the marked ones. **Distill** then removes the marked records from the
+journal. Before either step, a **shadow**, an isolated copy of the actor,
+previews what a rule would mark, and the **elision-impact diff** checks
+whether marking those entries changes the answers to the questions you ask.
+
+### The mechanism, in the engine's own calls
+
+Given `performance`, the `PerformanceV2` that hosts the canvas, with a session
+in its journal:
+
+```csharp
+// The rule: a stroke drawn, then the same stroke erased. Elide both acts.
+static void DefineForgetting(Reactions reactions) =>
+    reactions.DefineReaction("ForgetErasedStrokes")
+        .Job().Company().WithSharedHydration()
+        .Seek("Drawn")
+            .OnMatch("[_:Canvas].Draw($id, _, _, _, _, _)").One()
+        .ThenSeek("Erased")
+            .OnMatch("[_:Canvas].Erase($id)").One()
+        .Metadata.Elide();
+
+// 1. Preview: a shadow replays the journal into storage of its own and lists
+//    the entries the rule would elide. Nothing is elided anywhere.
+IReadOnlyList<long> wouldElide;
+using (Shadow preview = performance.Actor.Shadow(new ShadowConfig(
+    "preview", DatabaseType.IN_MEMORY, "memory",
+    configureReactions: actor => DefineForgetting(actor.Reactions))))
+{
+    preview.EnableSkipPreview();
+    preview.SyncUntil(performance.CurrentEntryId);
+    preview.Reactions.Execute();
+    wouldElide = preview.Reactions["ForgetErasedStrokes"].WouldSkip;
+}
+
+// 2. Proof: another shadow rehydrates twice, as the journal is and with those
+//    entries skipped, and compares the answers to the questions it is given.
+bool safe;
+using (Shadow proof = performance.Actor.Shadow(new ShadowConfig(
+    "proof", DatabaseType.IN_MEMORY, "memory")))
+{
+    proof.SyncUntil(performance.CurrentEntryId);
+    safe = proof.ElisionImpactDiff(wouldElide.ToArray(),
+        SketchActor.PictureQuery, SketchActor.StrokeCountQuery).IsSafe;
+}
+
+if (safe)
+{
+    // 3. Elide: the rule runs on the primary and marks the pairs. Every record
+    //    stays on disk; rehydration steps over the marked ones.
+    DefineForgetting(performance.Actor.Reactions);
+    performance.Actor.Reactions.Execute();
+
+    // 4. Distill: the marked records leave the journal.
+    performance.Distill();
+}
+```
+
+Release the journal and open it again, and the canvas rehydrates the same
+picture from the records that remain.
+[`StartHereTests`](forgetting.tests/StartHereTests.cs) runs this code as
+written, on a session of three strokes in which the second is erased. The
+preview lists entries 5 and 7, that stroke's Draw and Erase. The proof is
+safe. After Distill the journal holds entries 1, 2, 3, 4, 6 and 8: the seed's
+two records, the Define records of `Draw` and `Erase`, and the two strokes
+that stay.
+
+The facade wraps the same calls. [`ForgettingRule`](actor/ForgettingRule.cs)
+holds the rule, and `Preview`, `Prove`, `ElideErasedStrokes` and `Distill` in
+[`SketchActor`](actor/SketchActor.cs) are steps 1 to 4.
+
+### Reading order
+
+1. [`actor/ForgettingRule.cs`](actor/ForgettingRule.cs): the rule, in the one
+   place it is defined.
+2. [`actor/SketchActor.cs`](actor/SketchActor.cs): `Preview`, `Prove`,
+   `ElideErasedStrokes` and `Distill`; then `PictureAt` and `ProveAt`, which
+   ask the same questions of an earlier entry
+   ([What was given up](#what-was-given-up)).
+3. [`forgetting.tests/PreviewAndProofTests.cs`](forgetting.tests/PreviewAndProofTests.cs)
+   and [`forgetting.tests/CommitTests.cs`](forgetting.tests/CommitTests.cs):
+   each test's name states one behaviour of the preview, the proof, elision or
+   Distill, such as `Eliding_MarksThePairs_ButKeepsEveryRecordOnDisk` and
+   `Distill_KeepsTheJournalsLastRecord_EvenWhenItIsAnElidedErase`.
+4. [The model](#the-model), for why forgetting is safe on this canvas at all:
+   the picture depends only on the strokes it holds, and nothing in the domain
+   counts past acts.
+
+[Forgetting on Purpose](#forgetting-on-purpose) then runs the same steps on a
+full session and measures each one.
+
+### What you can skip
+
+Much of the code measures the demonstration rather than forgetting anything.
+`SketchActor.Census` and [`JournalFolder`](actor/JournalFolder.cs) count
+records and bytes. The census copies the journal and reads the copy through the
+Materialization API, so the primary's journal is never written to; it is a way
+of counting for the evidence, not a step of forgetting. The lab in
+[`forgetting/`](forgetting/) runs the scenes, times them and writes the
+report, and [`view/`](view/) draws the pictures. If you do read
+[`Lab.cs`](forgetting/Lab.cs), note that it takes the first picture of scene 6
+before scene 5 commits: after Distill, that past can no longer be replayed as
+it was.
+
+### A first run
+
+The full lab takes about a minute. A smaller session runs every scene in a few
+seconds and writes the same evidence:
+
+```
+dotnet run --project Sketch/forgetting -c Release -- --out Sketch/out/first --survivors 50 --hesitations 150
+```
+
+### Break it on purpose
+
+**Elide half of each pair.** In [`ForgettingRule.cs`](actor/ForgettingRule.cs),
+change `.Metadata.Elide()` to `.Metadata.Elide("Erased")`. Naming a seek elides
+only that seek's entries, so the rule now forgets each Erase and keeps its
+Draw. Run `dotnet test Sketch/Sketch.sln` and read what fails. The preview
+lists half as many entries. The proof of them comes back unsafe: with the
+Erases skipped, every hesitation is back in the picture. Committed anyway, the
+forgetting does not show at once. The canvas that ran the commit still prints
+the right picture, because elision changes what rehydration replays, not the
+state already in memory; the same journal opened again shows every
+hesitation. The lab stops at its preview check.
+
+**Give the canvas a memory.** In [`Canvas`](domain/Canvas.cs), add a count of
+every stroke ever drawn: an `internal int Draws { get; private set; }` that
+`Draw` increments after it lays the stroke. Then ask the diff about it: in
+`ProveAt` in [`SketchActor`](actor/SketchActor.cs), pass a third question,
+`"{ print canvas.Draws draws; }"`, to `ElisionImpactDiff`. Run the lab, and it
+stops at the proof: eliding the rule's pairs changed an observation. The
+picture and the stroke count are still unchanged. The new question's answer is
+not: it drops from the number of Draws performed to the number of strokes that
+stay, because a forgotten Draw no longer counts. That is why the domain keeps
+no counter ([invariants](#invariants-and-where-they-live)). "Safe" is always
+relative to the questions asked, and a canvas that remembers how many acts
+came before has a question that forgetting changes.
 
 ## The model
 
@@ -191,6 +337,25 @@ must match, by value. Every seek of a multi-seek reaction declares how many
 events of its kind make one match; `.One()` says one Draw and one Erase per
 pair. The reaction observes V2 Actions, which is why the facade issues every
 verb as a parametrised command rather than as script text.
+
+The line after `DefineReaction` says how and where the rule runs. `.Job()`
+makes each call to `Reactions.Execute()` one sweep of the journal, from where
+the rule last stopped, after which the call returns. So the journal forgets
+only when the host asks it to, and the same definition can preview on a shadow
+and commit on the primary at moments the host chooses. A `.Cue()` reaction
+does not return from `Execute()`: after its sweep it keeps running, on a
+thread the host gives it, and marks each new pair moments after its Erase is
+journaled, with no preview or proof in between.
+
+`.Company()` is the activation scope, which matters only when the actor is
+replicated: the rule runs on the director and on every follower, where
+`.DirectorOnly()` or `.CastOnly()` would narrow it to the director or to the
+followers. This actor is not replicated, so here the scope changes nothing.
+`.WithSharedHydration()` sets how the matcher searches the journal,
+breadth-first; `.WithIndependentHydration()` searches depth-first. For this
+rule the choice changes how the search runs, not what it finds, but one of the
+two must be named before the first `.Seek`. Paper 3 develops the two modes in
+§6.1 and the activation scopes in §6.6.
 
 The same definition runs in two places: on a shadow, to preview and prove the
 forgetting, and on the primary, to commit it.
